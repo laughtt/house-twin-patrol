@@ -15,7 +15,7 @@ import numpy as np
 
 from agent.duck_rpc import Duck
 from agent.localize import ParticleFilter, _wrap
-from agent.loop import route
+from agent.loop import follow, route
 from agent.mission import ARRIVE, ARRIVE_SURE, HZ, MARGIN, SQUEEZE, SURE, TURN, VX, goals
 from agent.twin_sim import ROOT, TwinSim
 
@@ -92,12 +92,14 @@ def main():
                     trace.append({"t": round(t, 2), "event": "arrive", "goal": g["name"], **results[-1]})
                     print("arrived", results[-1], flush=True)
                     break
-                if path is None or t - last_plan > 2.0:
+                ahead, reached = follow(path, est) if path else (None, False)
+                if reached or t - last_plan > 2.0:  # a corner reached (plan again from where it really is), or now and then
                     path, last_plan = route(hmap, est[:2], g["xy"], MARGIN) or route(hmap, est[:2], g["xy"], SQUEEZE), t
                     plans += 1
                 mode = "go" if path else "stuck"
                 if path:
-                    ahead = next((p for p in path if math.hypot(p[0] - est[0], p[1] - est[1]) > 0.12), path[-1])
+                    if last_plan == t:  # just planned
+                        ahead = follow(path, est)[0]
                     e = float(_wrap(math.atan2(ahead[1] - est[1], ahead[0] - est[0]) - est[2]))
                     w = max(-TURN, min(TURN, 2.0 * e))
                     v = VX * max(0.0, math.cos(e)) ** 3

@@ -56,6 +56,7 @@ class HouseMap:
             for x0, y0, x1, y1 in r["rects"]:
                 (x0, y0), (x1, y1) = np.subtract([x0, y0], self.o), np.subtract([x1, y1], self.o)
                 self.room_of[int(y0 / CELL) + 1:int(y1 / CELL) + 2, int(x0 / CELL) + 1:int(x1 / CELL) + 2] = k
+        self.clear = cv.distanceTransform((~self.grid).astype(np.uint8), cv.DIST_L2, 5) * CELL  # metres to the nearest hit
 
     def room(self, x, y):
         i = np.clip(((np.asarray(y) - self.o[1]) / CELL).astype(int) + 1, 0, self.grid.shape[0] - 1)
@@ -68,16 +69,24 @@ class HouseMap:
         return inside & ~self.grid[np.clip(i, 0, self.grid.shape[0] - 1), np.clip(j, 0, self.grid.shape[1] - 1)]
 
     def raycast(self, x, y, angle, step=0.02):
-        """Distance to the first hit for many rays at once (TOF_MAX + 1 when nothing within range)."""
-        dist = np.full(np.shape(x), TOF_MAX + 1.0)
-        alive = np.ones(np.shape(x), bool)
-        for r in np.arange(0.05, TOF_MAX + step, step):
-            hit = alive & ~self.free(x + r * np.cos(angle), y + r * np.sin(angle))
-            dist[hit] = r
-            alive &= ~hit
-            if not alive.any():
-                break
-        return dist
+        """Distance to the first hit for many rays at once (TOF_MAX + 1 when nothing within range). Same samples as a
+        2 cm march from 5 cm out, but each ray jumps over the ones that the distance map says can't hit anything."""
+        x, y, angle = np.broadcast_arrays(*(np.asarray(v, float) for v in (x, y, angle)))
+        shape, x, y = x.shape, x.ravel(), y.ravel()
+        c, s = np.cos(angle).ravel(), np.sin(angle).ravel()
+        dist, k, idx = np.full(x.size, TOF_MAX + 1.0), np.zeros(x.size, np.int64), np.arange(x.size)
+        last = int(round((TOF_MAX - 0.05) / step))
+        while idx.size:
+            r = 0.05 + k[idx] * step
+            i = ((y[idx] + r * s[idx] - self.o[1]) / CELL).astype(int) + 1
+            j = ((x[idx] + r * c[idx] - self.o[0]) / CELL).astype(int) + 1
+            inside = (i >= 0) & (i < self.grid.shape[0]) & (j >= 0) & (j < self.grid.shape[1])
+            d = np.where(inside, self.clear[i.clip(0, self.grid.shape[0] - 1), j.clip(0, self.grid.shape[1] - 1)], 0.0)
+            hit = d == 0
+            dist[idx[hit]] = r[hit]
+            k[idx] += np.maximum(1, ((0.98 * d - 1.5 * CELL) / step).astype(np.int64))  # a point this far from any obstacle cell
+            idx = idx[~hit & (k[idx] <= last)]
+        return dist.reshape(shape)
 
 
 class ParticleFilter:

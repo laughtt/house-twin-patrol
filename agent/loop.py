@@ -21,13 +21,39 @@ ROOT = Path(__file__).parent.parent
 RADIUS, HZ, VX = 0.12, 5, 0.25  # the sim walking policy barely steps below 0.25 m/s
 
 
+STEPS = [(di, dj, math.hypot(di, dj)) for di in (-1, 0, 1) for dj in (-1, 0, 1) if di or dj]
+
+
+def _to_goal(blocked, g):
+    """Route length (cells) from every cell to g on the grown map: one Dijkstra per goal and margin."""
+    H, W = blocked.shape
+    free, dist = (~blocked).ravel().tolist(), [math.inf] * (H * W)
+    dist[g[0] * W + g[1]] = 0.0
+    todo = [(0.0, g[0] * W + g[1])]
+    while todo:
+        d, c = heapq.heappop(todo)
+        if d > dist[c]:
+            continue
+        i, j = divmod(c, W)
+        for di, dj, w in STEPS:
+            if 0 <= i + di < H and 0 <= j + dj < W:
+                n = c + di * W + dj
+                if free[n] and d + w < dist[n]:
+                    dist[n] = d + w
+                    heapq.heappush(todo, (d + w, n))
+    return np.array(dist).reshape(H, W)
+
+
 def route(hmap, start, goal, radius=RADIUS):
-    """A* on the map grown by the duck's radius (plus any margin for not knowing exactly where it is), then pulled
-    tight to straight runs between corners."""
-    k = 2 * int(radius / CELL) + 1
-    blocked = cv.dilate(hmap.grid.astype(np.uint8), cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k)))
+    """Shortest route on the map grown by the duck's radius (plus any margin for not knowing exactly where it is),
+    pulled tight to straight runs between corners. The route length to the goal from every cell is worked out once per
+    goal and margin; each plan after that walks downhill on it."""
+    cache = hmap.__dict__.setdefault("grown", {})  # the grown map, once per house and margin
+    if radius not in cache:
+        k = 2 * int(radius / CELL) + 1
+        cache[radius] = cv.dilate(hmap.grid.astype(np.uint8), cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))).astype(bool) | hmap.grid
+    blocked = cache[radius]
     cell = lambda p: (int((p[1] - hmap.o[1]) / CELL) + 1, int((p[0] - hmap.o[0]) / CELL) + 1)  # noqa: E731
-    blocked = blocked.astype(bool) | hmap.grid
 
     def escape(c, r=25):  # standing closer to a wall than the margin: go first to the nearest cell outside it
         if not blocked[c]:
@@ -39,32 +65,39 @@ def route(hmap, start, goal, radius=RADIUS):
         i, j = free[np.argmin(((free - [c[0] - i0, c[1] - j0]) ** 2).sum(1))]
         return (int(i + i0), int(j + j0))
     s0, s, g = cell(start), escape(cell(start)), escape(cell(goal))
-    came, cost, todo = {s: None}, {s: 0.0}, [(0.0, s)]
-    while todo:
-        _, c = heapq.heappop(todo)
-        if c == g:
-            break
-        for di in (-1, 0, 1):
-            for dj in (-1, 0, 1):
-                n = (c[0] + di, c[1] + dj)
-                if (di or dj) and 0 <= n[0] < blocked.shape[0] and 0 <= n[1] < blocked.shape[1] and not blocked[n]:
-                    new = cost[c] + math.hypot(di, dj)
-                    if new < cost.get(n, 1e9):
-                        cost[n], came[n] = new, c
-                        heapq.heappush(todo, (new + math.hypot(g[0] - n[0], g[1] - n[1]), n))
-    if g not in came:
+    fields = hmap.__dict__.setdefault("to_goal", {})
+    if (radius, g) not in fields:
+        fields[(radius, g)] = _to_goal(blocked, g)
+    dist = fields[(radius, g)]
+    if not np.isfinite(dist[s]):
         return None
-    cells, c = [], g
-    while c:
-        cells.append(c)
-        c = came[c]
-    pts = [((j - 1 + 0.5) * CELL + hmap.o[0], (i - 1 + 0.5) * CELL + hmap.o[1]) for i, j in cells[::-1]]
-    clear = lambda a, b: all(not blocked[cell((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))] for t in np.linspace(0, 1, 40))
+    cells = [s]
+    while cells[-1] != g:  # downhill: the neighbour with the shortest way on
+        i, j = cells[-1]
+        cells.append(min(((i + di, j + dj) for di, dj, _ in STEPS if 0 <= i + di < dist.shape[0] and 0 <= j + dj < dist.shape[1]),
+                         key=lambda n: dist[n] + math.hypot(n[0] - i, n[1] - j)))
+    pts = [((j - 1 + 0.5) * CELL + hmap.o[0], (i - 1 + 0.5) * CELL + hmap.o[1]) for i, j in cells]
+    t = np.linspace(0, 1, 40)
+
+    def clear(a, b):
+        ii = ((a[1] + (b[1] - a[1]) * t - hmap.o[1]) / CELL).astype(int) + 1
+        jj = ((a[0] + (b[0] - a[0]) * t - hmap.o[0]) / CELL).astype(int) + 1
+        return not blocked[ii, jj].any()
     out = [pts[0]]
     for i in range(1, len(pts)):
         if not clear(out[-1], pts[i]):
             out.append(pts[i - 1])
     return ([pts[0]] if s != s0 else []) + out[1:] + [pts[-1]]
+
+
+def follow(path, p, near=0.12):
+    """path: the route's corners ahead. Corners the duck has come within `near` of are dropped (in place).
+    → (the corner to steer at, whether one was reached: time to plan again from where it really is)."""
+    reached = False
+    while len(path) > 1 and math.hypot(path[0][0] - p[0], path[0][1] - p[1]) <= near:
+        path.pop(0)
+        reached = True
+    return path[0], reached
 
 
 def main():

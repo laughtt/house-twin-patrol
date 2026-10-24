@@ -19,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from agent.localize import ParticleFilter, _wrap
-from agent.loop import route
+from agent.loop import follow, route
 from agent.twin_sim import ROOT, TwinSim
 
 HZ, VX, TURN = 5, 0.25, 0.8
@@ -92,12 +92,14 @@ def episode(args):
                                     "room_said": room_name(est[0], est[1]), "room_true": room_name(true[0], true[1])})
                     trace.append({"t": round(t, 1), "event": "arrive", "goal": g["name"], **results[-1]})
                     break
-                if path is None or t - last_plan > 2.0:  # a narrow door: squeeze through with a smaller margin
+                ahead, reached = follow(path, est) if path else (None, False)
+                if reached or t - last_plan > 2.0:  # a corner reached (plan again from where it really is), or now and then
                     path, last_plan = route(hmap, est[:2], g["xy"], MARGIN) or route(hmap, est[:2], g["xy"], SQUEEZE), t
                     plans += 1
                 mode = "go" if path else "stuck"
                 if path:  # steer at the next corner of the route until 12 cm from it (aiming past a corner cuts it)
-                    ahead = next((p for p in path if math.hypot(p[0] - est[0], p[1] - est[1]) > 0.12), path[-1])
+                    if last_plan == t:  # just planned
+                        ahead = follow(path, est)[0]
                     e = float(_wrap(math.atan2(ahead[1] - est[1], ahead[0] - est[0]) - est[2]))
                     w = max(-TURN, min(TURN, 2.0 * e))
                     v = VX * max(0.0, math.cos(e)) ** 3  # slow down in turns instead of cutting the corner
