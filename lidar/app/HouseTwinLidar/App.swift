@@ -136,7 +136,7 @@ struct ContentView: View {
         let walls = rec.walls[rec.room, default: 0], low = rec.sectors[rec.room, default: []]
         let tags = rec.tags.filter { $0.room == rec.room }.count
         let tip = walls < 25 ? "Sweep every wall at chest height"
-            : low.count < 8 ? "Go down to duck height: phone below your knee (under 50 cm), turn slowly all the way round"
+            : low.count < 8 ? "Go down to duck height: phone below your knee (under 60 cm), turn slowly all the way round"
             : tags < 3 ? "Aim the crosshair at big things that never move (fridge, oven, sofa, bed, toilet, TV) and tap Tag"
             : "\(rec.room) done: next zone"
         return VStack(alignment: .leading, spacing: 4) {

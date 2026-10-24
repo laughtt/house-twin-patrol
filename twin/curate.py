@@ -59,9 +59,10 @@ def ask(cands, crops, rooms):
         content += [{"text": f"Candidate {c['id']}"},
                     {"image": {"format": "jpeg", "source": {"bytes": cv.imencode(".jpg", crops[c["id"]], [cv.IMWRITE_JPEG_QUALITY, 80])[1].tobytes()}}}]
     client = boto3.client("bedrock-runtime", region_name=CUR["region"], config=Config(connect_timeout=5, read_timeout=90, retries={"max_attempts": 1}))
-    r = client.converse(modelId=CUR["model"], messages=[{"role": "user", "content": content}], inferenceConfig={"maxTokens": 4000},
+    # forced tool: Haiku answers straight away (unforced it thinks first and a big list runs out of tokens mid-report)
+    r = client.converse(modelId=CUR["model"], messages=[{"role": "user", "content": content}], inferenceConfig={"maxTokens": 8000},
                         toolConfig={"tools": [{"toolSpec": {"name": "report", "description": "Report the checked landmark list.",
-                                                            "inputSchema": {"json": SCHEMA}}}]})
+                                                            "inputSchema": {"json": SCHEMA}}}], "toolChoice": {"tool": {"name": "report"}}})
     return next(c["toolUse"]["input"] for c in r["output"]["message"]["content"] if "toolUse" in c)
 
 
@@ -80,10 +81,10 @@ def curate(cands, crops, rooms, use_model=True):
     got = set()
     for d in items:  # only well-formed answers replace the config decision
         if not (isinstance(d, dict) and isinstance(d.get("id"), str) and d["id"] in dec and isinstance(d.get("keep"), bool)
-                and isinstance(d.get("label"), str) and 0 < len(d["label"].strip()) <= 64 and isinstance(d.get("merge_into", ""), str)
-                and d.get("mobility") in MOBILITY):
+                and isinstance(d.get("label", ""), str) and len(d.get("label", "")) <= 64 and isinstance(d.get("merge_into", ""), str)
+                and d.get("mobility") in MOBILITY and (d.get("label", "").strip() or not d["keep"])):  # a dropped one needs no name
             continue
-        dec[d["id"]] = {"keep": d["keep"], "label": d["label"].strip(), "merge_into": d.get("merge_into", ""), "mobility": d["mobility"],
+        dec[d["id"]] = {"keep": d["keep"], "label": d.get("label", "").strip() or dec[d["id"]]["label"], "merge_into": d.get("merge_into", ""), "mobility": d["mobility"],
                         "reason": str(d.get("reason", ""))[:120]}
         if d["id"] in user:  # the person's own tags are never dropped or merged away
             dec[d["id"]].update(keep=True, merge_into="")

@@ -27,7 +27,7 @@ bench = { zones = ["hall", "entry", "garden"], else = "" }
 sizes = [{ ids = [0, 9], m = 0.15 }, { ids = [10, 29], m = 0.10 }, { ids = [30, 39], m = 0.20 }, { ids = [40, 40], m = 0.15 }]
 
 [landmarks]
-low_h = 0.6        # a frame is "duck height" when the camera is lower than this (m)
+low_h = 0.75       # a frame is "duck height" when the camera is lower than this (m): knee height or below
 min_views = 3      # without the curate model: detector landmarks seen in fewer keyframes are dropped (tags always kept)
 # how much the duck trusts a sighting, by how often that kind of thing moves ("ignore" = not a landmark)
 weight = { fixed = 1.0, rare = 0.6, often = 0.2 }

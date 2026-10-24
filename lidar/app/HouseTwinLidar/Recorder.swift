@@ -56,6 +56,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     private var progress: NSKeyValueObservation?
     private var ref: (t: TimeInterval, p: SIMD3<Float>, q: simd_quatf)?
     private var floorY: Float?
+    private var floorSure = false
     private var stillSince: TimeInterval?, lowSince: TimeInterval = 0, lowSector: Int?
     private var forceNext = false, tagShot: [String: Any]?, tagLabel: String?
 
@@ -275,8 +276,13 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         let dt = now - r.t, a = (r.q.inverse * q).angle
         let speed = Double(simd_length(p - r.p)) / dt, rot = Double(min(a, 2 * .pi - a)) * 180 / .pi / dt
         let planes = frame.anchors.compactMap { $0 as? ARPlaneAnchor }.filter { $0.alignment == .horizontal }
-        floorY = planes.filter { $0.classification == .floor }.map(\.transform.columns.3.y).min()
-            ?? planes.filter { $0.planeExtent.width * $0.planeExtent.height >= 0.5 }.map(\.transform.columns.3.y).min()
+        // the floor only goes down: a sofa seat or table top must never pass for it (heights would read too low)
+        if let y = planes.filter({ $0.classification == .floor }).map(\.transform.columns.3.y).min() {
+            floorY = min(floorY ?? y, y)
+            floorSure = true
+        } else if !floorSure, let y = planes.filter({ $0.planeExtent.width * $0.planeExtent.height >= 0.5 }).map(\.transform.columns.3.y).min() {
+            floorY = min(floorY ?? y, y)
+        }
         let h = floorY.map { Double(p.y - $0) }
         height = h
         let f = SIMD2(-T.columns.2.x, -T.columns.2.z)  // heading on the floor plane (the camera looks along -z)
@@ -291,7 +297,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
             hold = v
         } else { stillSince = nil; hold = 0 }
         if h.map({ $0 >= 0.9 }) ?? true { walls[room, default: 0] += min(dt, 0.5) }
-        let low = h.map { $0 < 0.5 } ?? false, calm = rot < 30 && speed < 0.15
+        let low = h.map { $0 < 0.6 } ?? false, calm = rot < 30 && speed < 0.15
         if low && !calm != lowFast { lowFast = low && !calm }
         if low, calm, let k {
             if k != lowSector { lowSector = k; lowSince = r.t }
