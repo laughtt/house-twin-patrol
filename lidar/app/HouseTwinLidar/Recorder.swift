@@ -3,6 +3,20 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import RealityKit
 
+struct Tag: Identifiable {
+    let i: Int
+    var label: String
+    let uv: [Double]
+    let room: String
+    var id: Int { i }
+    var dict: [String: Any] { ["i": i, "label": label, "uv": uv, "room": room] }
+    init(i: Int, label: String, uv: [Double], room: String) { self.i = i; self.label = label; self.uv = uv; self.room = room }
+    init?(_ d: [String: Any]) {
+        guard let i = d["i"] as? Int, let label = d["label"] as? String else { return nil }
+        self.init(i: i, label: label, uv: d["uv"] as? [Double] ?? [0.5, 0.5], room: d["room"] as? String ?? "")
+    }
+}
+
 /// Records RGB + LiDAR depth + ARKit pose at ~4 fps into Documents/<session>/ and packs it as a zip.
 /// Pose convention: `T` is ARKit's camera-to-world 4x4, row-major. ARKit world: metres, y up (gravity),
 /// camera axes: x right, y up, z backwards (the camera looks along -z), in the sensor's landscape image.
@@ -21,6 +35,13 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     @Published var reviewing = false
     @Published var area = 0.0
     @Published var growth = 0.0
+    @Published var height: Double?
+    @Published var hold = 0.0
+    @Published var walls: [String: Double] = [:]
+    @Published var sectors: [String: Set<Int>] = [:]
+    @Published var facing: Int?
+    @Published var lowFast = false
+    @Published var tags: [Tag] = []
     let veil = AnchorEntity(.camera)
     private(set) var dir: URL!
     private let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -33,6 +54,10 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     private var pose: [Float] = []
     private var busy = false
     private var progress: NSKeyValueObservation?
+    private var ref: (t: TimeInterval, p: SIMD3<Float>, q: simd_quatf)?
+    private var floorY: Float?
+    private var stillSince: TimeInterval?, lowSince: TimeInterval = 0, lowSector: Int?
+    private var forceNext = false, tagShot: [String: Any]?, tagLabel: String?
 
     func run() {
         guard supported else { return }
@@ -52,6 +77,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     private var config: ARWorldTrackingConfiguration {
         let config = ARWorldTrackingConfiguration()
         config.frameSemantics = .sceneDepth
+        config.planeDetection = .horizontal
         if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) { config.sceneReconstruction = .mesh }
         return config
     }
@@ -71,11 +97,15 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
             "fps": Self.fps, "rgb": "jpg, sensor (landscape) orientation", "depth": "float16 little-endian metres, depth_wh",
             "conf": "uint8 0 low, 1 medium, 2 high, depth_wh",
             "pose": "T = ARKit camera-to-world, row-major 4x4; world y up (gravity), metres; camera x right, y up, z back",
-            "K": "fx fy cx cy for the saved rgb; K_depth for the depth map"]
+            "K": "fx fy cx cy for the saved rgb; K_depth for the depth map", "format": 2,
+            "h": "camera height above the floor (lowest ARKit floor plane), metres, null until a floor is found",
+            "events": "room/doorway taps; tag = {t, i, label, room, T, uv}: i = the frame saved for it, uv = crosshair in that rgb (0..1, top-left origin)",
+            "labels": "labels.json: ranges = zones fixed after recording; tags = [{i, label, uv, room}] reviewed after recording, they win over the tag events"]
         try? JSONSerialization.data(withJSONObject: meta, options: .prettyPrinted).write(to: dir.appendingPathComponent("session.json"))
         lines = handle("frames.jsonl")
         events = handle("events.jsonl")
         frames = 0; bytes = 0; zip = nil; status = ""; t0 = now; last = 0
+        walls = [:]; sectors = [:]; tags = []; forceNext = false; tagShot = nil
         recording = true
         UIApplication.shared.isIdleTimerDisabled = true
         mark("room")
@@ -90,12 +120,12 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         }
     }
 
-    /// Writes the reviewed per-frame zones (labels.json + frames.jsonl room) if given, then packs the zip.
-    func save(_ labels: [String]?) {
+    /// Writes the reviewed per-frame zones (frames.jsonl room) and/or tags into labels.json if given, then packs the zip.
+    func save(_ labels: [String]?, _ tags: [Tag]?) {
         zip = nil
         status = "Packing…"
         queue.async { [self] in
-            if let labels { relabel(labels) }
+            if labels != nil || tags != nil { relabel(labels, tags ?? []) }
             let out = Result { try pack(dir) }
             DispatchQueue.main.async { [self] in
                 zip = try? out.get()
@@ -117,7 +147,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         let z = docs.appendingPathComponent(id + ".zip")
         zip = FileManager.default.fileExists(atPath: z.path) ? z : nil
         status = "Opened \(id)"
-        if zip == nil { save(nil) }
+        if zip == nil { save(nil, nil) }
     }
 
     func delete(_ id: String) {
@@ -136,6 +166,24 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         queue.async { [self] in write(line, to: events) }
     }
 
+    /// Tag: the next camera frame is saved right away; the event is written once both that frame and the label are known.
+    func tag() { forceNext = true; tagShot = nil; tagLabel = nil }
+
+    func label(_ l: String?) {
+        guard let l else { forceNext = false; tagShot = nil; tagLabel = nil; return }
+        tagLabel = l
+        flushTag()
+    }
+
+    private func flushTag() {
+        guard let shot = tagShot, let l = tagLabel else { return }
+        let line = shot.merging(["label": l]) { $1 }
+        queue.async { [self] in write(line, to: events) }
+        tags.append(Tag(i: shot["i"] as! Int, label: l, uv: shot["uv"] as! [Double], room: shot["room"] as! String))
+        status = "Tagged \(l)"
+        tagShot = nil; tagLabel = nil
+    }
+
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         let state: String
         switch frame.camera.trackingState {
@@ -147,6 +195,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         let T = frame.camera.transform
         pose = (0..<4).flatMap { r in (0..<4).map { c in T[c][r] } }
         now = frame.timestamp
+        guide(frame)
         if now - lastMesh >= 1 {
             lastMesh = now
             let meshes = frame.anchors.compactMap { $0 as? ARMeshAnchor }
@@ -155,7 +204,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
                 DispatchQueue.main.async { [self] in growth = a - area; area = a }
             }
         }
-        guard recording, !busy, frame.timestamp - last >= 1 / Self.fps, let depth = frame.sceneDepth else { return }
+        guard recording, !busy, forceNext || frame.timestamp - last >= 1 / Self.fps, let depth = frame.sceneDepth else { return }
         last = frame.timestamp
         busy = true
         let i = frames, name = String(format: "%06d", frames)
@@ -166,7 +215,15 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
             "i": i, "t": frame.timestamp - t0, "rgb": "rgb/\(name).jpg", "depth": "depth/\(name).bin", "conf": "conf/\(name).bin",
             "rgb_wh": [Int(Self.width), Int((res.height * s).rounded())], "K": k(s),
             "depth_wh": [CVPixelBufferGetWidth(depth.depthMap), CVPixelBufferGetHeight(depth.depthMap)], "K_depth": k(sd),
-            "T": pose, "tracking": state, "room": room]
+            "T": pose, "tracking": state, "room": room,
+            "h": floorY.map { (Double(T.columns.3.y - $0) * 100).rounded() / 100 as Any } ?? NSNull()]
+        if forceNext {
+            forceNext = false
+            let c = CGPoint(x: 0.5, y: 0.5).applying(frame.displayTransform(for: .portrait, viewportSize: view.bounds.size).inverted())
+            let uv = [c.x, c.y].map { (Double($0) * 1e4).rounded() / 1e4 }
+            tagShot = ["t": frame.timestamp - t0, "i": i, "event": "tag", "room": room, "T": pose, "uv": uv]
+            flushTag()
+        }
         let image = CIImage(cvPixelBuffer: frame.capturedImage)
         let depthMap = depth.depthMap, conf = depth.confidenceMap
         queue.async { [self] in
@@ -210,6 +267,38 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         task.resume()
     }
 
+    /// Every 0.2 s: floor and camera height, motion over the last 0.2 s, hold-still ring and the per-zone checklist.
+    private func guide(_ frame: ARFrame) {
+        let T = frame.camera.transform, p = SIMD3(T.columns.3.x, T.columns.3.y, T.columns.3.z), q = simd_quatf(T)
+        guard let r = ref, now - r.t >= 0.2 else { if ref == nil { ref = (now, p, q) }; return }
+        ref = (now, p, q)
+        let dt = now - r.t, a = (r.q.inverse * q).angle
+        let speed = Double(simd_length(p - r.p)) / dt, rot = Double(min(a, 2 * .pi - a)) * 180 / .pi / dt
+        let planes = frame.anchors.compactMap { $0 as? ARPlaneAnchor }.filter { $0.alignment == .horizontal }
+        floorY = planes.filter { $0.classification == .floor }.map(\.transform.columns.3.y).min()
+            ?? planes.filter { $0.planeExtent.width * $0.planeExtent.height >= 0.5 }.map(\.transform.columns.3.y).min()
+        let h = floorY.map { Double(p.y - $0) }
+        height = h
+        let f = SIMD2(-T.columns.2.x, -T.columns.2.z)  // heading on the floor plane (the camera looks along -z)
+        let k = simd_length(f) > 0.5 ? Int((Double(atan2(f.y, f.x)) / (.pi / 4) + 8).rounded(.down)) % 8 : nil
+        if k != facing { facing = k }
+        guard recording else { hold = 0; lowFast = false; return }
+        if speed < 0.05 && rot < 10 {
+            let s = stillSince ?? r.t
+            stillSince = s
+            let v = min((now - s) / 1.5, 1)
+            if v == 1 && hold < 1 { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
+            hold = v
+        } else { stillSince = nil; hold = 0 }
+        if h.map({ $0 >= 0.9 }) ?? true { walls[room, default: 0] += min(dt, 0.5) }
+        let low = h.map { $0 < 0.5 } ?? false, calm = rot < 30 && speed < 0.15
+        if low && !calm != lowFast { lowFast = low && !calm }
+        if low, calm, let k {
+            if k != lowSector { lowSector = k; lowSince = r.t }
+            else if now - lowSince >= 1, sectors[room]?.contains(k) != true { sectors[room, default: []].insert(k) }
+        } else { lowSector = nil }
+    }
+
     private static func area(_ g: ARMeshGeometry) -> Double {
         let v = g.vertices, base = v.buffer.contents() + v.offset
         let idx = g.faces.buffer.contents().assumingMemoryBound(to: UInt32.self)
@@ -225,20 +314,22 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         return Double(sum)
     }
 
-    private func relabel(_ labels: [String]) {
+    private func relabel(_ labels: [String]?, _ tags: [Tag]) {
         let url = dir.appendingPathComponent("frames.jsonl")
         var out = Data(), ranges: [[String: Any]] = []
         let lines = ((try? String(contentsOf: url)) ?? "").split(separator: "\n")
-        for (i, s) in lines.enumerated() where i < labels.count {
-            guard let obj = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any],
-                  let data = try? JSONSerialization.data(withJSONObject: obj.merging(["room": labels[i]]) { $1 }) else { continue }
+        for (i, s) in lines.enumerated() where i < labels?.count ?? lines.count {
+            guard let obj = (try? JSONSerialization.jsonObject(with: Data(s.utf8))) as? [String: Any] else { continue }
+            let room = labels?[i] ?? obj["room"] as? String ?? ""
+            guard let data = try? JSONSerialization.data(withJSONObject: obj.merging(["room": room]) { $1 }) else { continue }
             out.append(data + [0x0A])
             let n = obj["i"] as? Int ?? i
-            if ranges.last?["room"] as? String == labels[i] { ranges[ranges.count - 1]["to"] = n }
-            else { ranges.append(["from": n, "to": n, "room": labels[i]]) }
+            if ranges.last?["room"] as? String == room { ranges[ranges.count - 1]["to"] = n }
+            else { ranges.append(["from": n, "to": n, "room": room]) }
         }
-        try? out.write(to: url)
-        let doc: [String: Any] = ["ranges": ranges, "note": "zones fixed after recording; frame i ranges (inclusive) override room"]
+        if labels != nil { try? out.write(to: url) }
+        let doc: [String: Any] = ["ranges": ranges, "tags": tags.map(\.dict),
+                                  "note": "zones fixed after recording; frame i ranges (inclusive) override room. tags: objects labelled after recording, uv = point in frame i's rgb (0..1, top-left origin); they replace the tag events"]
         try? JSONSerialization.data(withJSONObject: doc, options: .prettyPrinted).write(to: dir.appendingPathComponent("labels.json"))
     }
 

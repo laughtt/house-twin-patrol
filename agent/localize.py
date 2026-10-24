@@ -1,6 +1,7 @@
 """Where is the duck? A particle filter on the house map (house.json frame: metres, z up).
 
-Odometry moves the guesses; the 8x8 ToF (its two level rows) scores them against the map; an ArUco marker snaps them.
+Odometry moves the guesses; the 8x8 ToF (its two level rows) scores them against the map; recognised objects (fixed
+ones count most) and the room's colour pick the right place even from an unknown start; an ArUco marker, if any, snaps them.
 """
 import math
 
@@ -38,6 +39,17 @@ class HouseMap:
                 ok = (x >= 0) & (x < self.W) & (y >= 0) & (y < self.L)
                 self.grid[(y[ok] / CELL).astype(int) + 1, (x[ok] / CELL).astype(int) + 1] = True
         self.markers = {m["id"]: m for m in house.get("markers", [])}
+        self.landmarks = [lm for lm in house.get("landmarks", []) if lm.get("cls") and lm.get("weight", 0) > 0]
+        self.rooms = house.get("rooms", [])
+        self.room_of = np.full(self.grid.shape, -1, np.int16)  # which room each cell is in (-1: outside every room)
+        for k, r in enumerate(self.rooms):
+            for x0, y0, x1, y1 in r["rects"]:
+                self.room_of[int(y0 / CELL) + 1:int(y1 / CELL) + 2, int(x0 / CELL) + 1:int(x1 / CELL) + 2] = k
+
+    def room(self, x, y):
+        i = np.clip((np.asarray(y) / CELL).astype(int) + 1, 0, self.grid.shape[0] - 1)
+        j = np.clip((np.asarray(x) / CELL).astype(int) + 1, 0, self.grid.shape[1] - 1)
+        return self.room_of[i, j]
 
     def free(self, x, y):
         i, j = (np.asarray(y) / CELL).astype(int) + 1, (np.asarray(x) / CELL).astype(int) + 1
@@ -62,6 +74,16 @@ class ParticleFilter:
         self.map, self.n, self.rng = house_map, n, np.random.default_rng(seed)
         self.p = np.c_[x + self.rng.normal(0, spread[0], n), y + self.rng.normal(0, spread[0], n), yaw + self.rng.normal(0, spread[1], n)]
         self.w = np.full(n, 1 / n)
+        self.misfit = 0  # trusted sightings in a row that no guess explained
+
+    @classmethod
+    def anywhere(cls, house_map, n=2000, seed=0):
+        """Unknown start (switched on, or picked up and put down): guesses over every free cell of every room, any heading."""
+        pf = cls(house_map, 0.0, 0.0, 0.0, n=n, seed=seed)
+        cells = np.argwhere(~house_map.grid & ((house_map.room_of >= 0) if house_map.rooms else True))
+        pick = cells[pf.rng.integers(len(cells), size=n)]
+        pf.p = np.c_[(pick[:, 1] - 1 + pf.rng.random(n)) * CELL, (pick[:, 0] - 1 + pf.rng.random(n)) * CELL, pf.rng.uniform(-np.pi, np.pi, n)]
+        return pf
 
     def predict(self, forward, left, turn):
         """Odometry deltas in the duck's frame since the last call; noise covers its slip and heading drift."""
@@ -88,6 +110,60 @@ class ParticleFilter:
         self.w *= np.exp(np.log(like).sum(1) / 4)  # tempered: 8 zones are not independent evidence
         self._normalise()
 
+    def update_landmarks(self, dets, hfov):
+        """Objects the camera recognised: [{cls, bearing (rad, + = left), range (m) or None}]. Each scores every guess by
+        the mapped landmark of that class that best explains it (in view, not behind a wall), times how much that kind
+        of thing stays put (house.json weight: fixed 1, rarely moved 0.6, often moved 0.2)."""
+        x, y, yaw = self.p.T
+        for d in dets:
+            best = np.zeros(self.n)
+            for lm in self.map.landmarks:
+                if lm["cls"] != d["cls"]:
+                    continue
+                dx, dy = lm["center"][0] - x, lm["center"][1] - y
+                r, rad = np.hypot(dx, dy), max(lm["size"][:2]) / 2
+                b = _wrap(np.arctan2(dy, dx) - yaw)
+                like = np.exp(-0.5 * (_wrap(d["bearing"] - b) / (np.radians(4) + np.arctan2(rad, np.maximum(r, 0.3)))) ** 2)
+                if d.get("range") is not None:
+                    like *= np.exp(-0.5 * ((d["range"] - np.maximum(r - 0.7 * rad, 0.1)) / (0.1 + 0.2 * r)) ** 2)
+                like *= (np.abs(b) < hfov / 2 + np.arctan2(rad, np.maximum(r, 0.3))) & (r < 5.0)
+                k = np.nonzero(like * lm["weight"] > best + 1e-3)[0]  # only guesses this landmark could improve
+                if len(k):
+                    seen = self.map.raycast(x[k], y[k], yaw[k] + b[k]) >= np.minimum(r[k] - rad - 0.3, TOF_MAX)
+                    best[k] = np.maximum(best[k], lm["weight"] * like[k] * seen)
+            fixed = [lm for lm in self.map.landmarks if lm["cls"] == d["cls"] and lm["weight"] >= 0.6]
+            if fixed:  # trusted sightings that no guess explains, three in a row: the guesses are probably all wrong
+                self.misfit = self.misfit + 1 if np.sum(self.w * best) < 0.1 else 0
+                if self.misfit >= 3:
+                    k = self._reseed(d, fixed)
+                    best[k] = 1.0
+                    x, y, yaw = self.p.T
+                    self.misfit = 0
+            self.w *= 0.2 + 0.8 * best  # 0.2: the detector can be wrong, or the thing was moved
+        self._normalise()
+
+    def _reseed(self, d, fixed, share=0.05):
+        """Replace a share of the guesses with poses that would see one of these landmarks this way (sensor resetting)."""
+        k = self.rng.choice(self.n, int(self.n * share), replace=False)
+        lm = [fixed[i] for i in self.rng.integers(len(fixed), size=len(k))]
+        c = np.array([m["center"] for m in lm])
+        r = (np.full(len(k), d["range"]) + 0.7 * np.array([max(m["size"][:2]) / 2 for m in lm]) if d.get("range") is not None
+             else self.rng.uniform(0.5, 4.0, len(k))) * self.rng.normal(1, 0.1, len(k))
+        yaw = self.rng.uniform(-np.pi, np.pi, len(k))
+        a = yaw + d["bearing"] + self.rng.normal(0, np.radians(4), len(k))
+        self.p[k] = np.c_[c[:, 0] - r * np.cos(a), c[:, 1] - r * np.sin(a), yaw]
+        self.w[k] = self.w.mean()
+        return k
+
+    def update_room(self, hist, sharp=25.0):
+        """The camera's colour fingerprint against each room's (house.json colour_hs): a weak vote for the room."""
+        sims = np.array([np.sum(np.sqrt(np.asarray(hist) * r["colour_hs"])) if "colour_hs" in r else np.nan for r in self.map.rooms])
+        if not np.isfinite(sims).any():
+            return
+        score = np.r_[np.nan_to_num(np.exp(sharp * (sims - np.nanmax(sims))), nan=1.0), 0.5]  # last: outside every room
+        self.w *= 0.6 + 0.4 * score[self.map.room(self.p[:, 0], self.p[:, 1])]
+        self._normalise()
+
     def update_marker(self, marker_id, solutions):
         """One ArUco sighting. IPPE gives two camera poses; keep the one nearest the current guess."""
         m = self.map.markers[marker_id]
@@ -112,8 +188,18 @@ class ParticleFilter:
         return x, y, yaw
 
     def estimate(self):
-        return (float(np.sum(self.w * self.p[:, 0])), float(np.sum(self.w * self.p[:, 1])),
-                math.atan2(np.sum(self.w * np.sin(self.p[:, 2])), np.sum(self.w * np.cos(self.p[:, 2]))))
+        """The strongest group of guesses (30 cm cells, then everything within 50 cm of the best one): stray guesses
+        elsewhere in the house don't drag the answer between places."""
+        cell = np.floor(self.p[:, :2] / 0.3).astype(np.int64)
+        _, inv = np.unique(cell[:, 0] * 100003 + cell[:, 1], return_inverse=True)
+        top = inv == np.bincount(inv, self.w).argmax()
+        c = np.average(self.p[top, :2], axis=0, weights=self.w[top] + 1e-12)
+        near = lambda q: np.hypot(self.p[:, 0] - q[0], self.p[:, 1] - q[1]) < 0.5  # noqa: E731
+        if getattr(self, "last", None) is not None and self.w[near(self.last)].sum() > 0.6 * self.w[near(c)].sum():
+            c = self.last  # stay with the place we were at unless another one is clearly stronger
+        w = self.w * near(c) + 1e-12
+        self.last = (float(np.average(self.p[:, 0], weights=w)), float(np.average(self.p[:, 1], weights=w)))
+        return (*self.last, math.atan2(np.sum(w * np.sin(self.p[:, 2])), np.sum(w * np.cos(self.p[:, 2]))))
 
     def _normalise(self):
         total = self.w.sum()
