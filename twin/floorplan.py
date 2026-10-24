@@ -57,6 +57,7 @@ def plan(V, Nv, traj, tlab):
     # at each zone tap, look back along the walk for the narrowest place squeezed through: < 1.3 m is a doorway
     # (separate rooms), wider is open plan. Doorways are then cut into the walkable map so no zone leaks through.
     names = list(dict.fromkeys(tlab))
+    tlab = list(tlab)
     dist = cv.distanceTransform(walk, cv.DIST_L2, 5)
     if os.environ.get("FLOORPLAN_DEBUG"):
         dbg = cv.cvtColor(walk[::-1] * 200, cv.COLOR_GRAY2BGR)
@@ -73,10 +74,11 @@ def plan(V, Nv, traj, tlab):
         a, b = names.index(tlab[k - 1]), names.index(tlab[k])
         if a == b:
             continue
-        def opening(i):  # (cells across the walk that are walkable, both sides) at walk point i
-            r, c = cell(traj[i])
-            step = traj[i + 1, :2] - traj[i - 1, :2]
-            axis = 0 if abs(step[0]) > abs(step[1]) else 1  # walking along x crosses a wall that runs along y
+        def opening(i):  # the narrowest way across the walk at point i: both directions are tried, because at a
+            r, c = cell(traj[i])  # corner people walk diagonally and their step says little about the wall's direction
+            return min((across(r, c, axis) for axis in (0, 1)), key=lambda o: o[0])
+
+        def across(r, c, axis):  # (cells across that are walkable, both sides) — axis 0 = a wall running along y
             dr, dc = (1, 0) if axis == 0 else (0, 1)
             ends, jambs = [], 0
             for s in (-1, 1):
@@ -104,12 +106,14 @@ def plan(V, Nv, traj, tlab):
         center = to_m(r + mid * dr + 0.5, c + mid * dc + 0.5)
         if all(np.hypot(*np.subtract(center, d["center"])) > 0.5 for d in doors):
             doors.append({"axis": axis, "center": center, "width": round(float(width), 3), "zones": (a, b)})
-    for d in doors:  # cut: one cell across the doorway, a little wider than it
-        (r, c), half = cell(d["center"]), int(d["width"] / 2 / CELL) + 2
+        for i in range(min(j + 1, k), max(j + 1, k)):  # the room changes where the walk crosses the door, not at the tap:
+            tlab[i] = names[b] if j < k else names[a]  # people tap a few steps late (or early)
+    for d in doors:  # cut: three cells across the doorway (one leaked when the door sat half a cell off the wall line,
+        (r, c), half = cell(d["center"]), int(d["width"] / 2 / CELL) + 2  # and a room grew into its neighbour), a little wider
         if d["axis"] == 0:
-            walk[max(0, r - half):r + half + 1, c] = 0
+            walk[max(0, r - half):r + half + 1, max(0, c - 1):c + 2] = 0
         else:
-            walk[r, max(0, c - half):c + half + 1] = 0
+            walk[max(0, r - 1):r + 2, max(0, c - half):c + half + 1] = 0
 
     # each walkable cell takes the zone of the nearest walked point, counted along the walkable cells (not through walls)
     zone = np.full(shape, -1, np.int32)
@@ -230,7 +234,17 @@ def walls_from(edges, doors):
         cuts = [(d["center"][1 - ax] - d["width"] / 2, d["center"][1 - ax] + d["width"] / 2) for d in doors
                 if d["axis"] == ax and abs(d["center"][ax] - pos) < DOOR_REACH]
         walls += [(ax, pos, a, b, WALL_T, False) for a, b in subtract(lo, hi, cuts) if hi - lo > 0.1]
-    return walls
+
+    def in_door(w):  # outline stubs left inside a doorway by the cut (10 cm pieces across it)
+        p, q = seg(w)
+        return any(all(abs(pt[1 - d["axis"]] - d["center"][1 - d["axis"]]) <= d["width"] / 2 + 0.05 and
+                       abs(pt[d["axis"]] - d["center"][d["axis"]]) <= DOOR_REACH for pt in (p, q)) for d in doors)
+    return [w for w in walls if not in_door(w)]
+
+
+def seg(w):
+    ax, pos, lo, hi = w[:4]
+    return ([pos, lo], [pos, hi]) if ax == 0 else ([lo, pos], [hi, pos])
 
 
 def subtract(lo, hi, cuts):

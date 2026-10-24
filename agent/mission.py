@@ -23,6 +23,7 @@ from agent.twin_sim import ROOT, TwinSim
 
 HZ, VX, TURN = 5, 0.25, 0.8
 SURE, ARRIVE, GOAL_S = 0.6, 0.25, 120  # confidence to act on the guess; how close is "there"; time per goal
+ARRIVE_SURE = 0.85  # saying "I'm here" needs more: at 0.6 it sometimes claimed a goal it was 50 cm+ away from
 MARGIN = 0.18  # route clearance: the duck's 10 cm half width + 8 cm for where it thinks it is vs where it is
 SQUEEZE = 0.12  # when no route has that much room (a narrow door): 2 cm to spare, walked slowly
 
@@ -82,7 +83,7 @@ def episode(args):
             if back:
                 mode, v, w, back = "back off", -0.1, 0.0, back - 1
             elif conf >= SURE:
-                if math.hypot(est[0] - g["xy"][0], est[1] - g["xy"][1]) < ARRIVE:
+                if math.hypot(est[0] - g["xy"][0], est[1] - g["xy"][1]) < ARRIVE and conf >= ARRIVE_SURE:
                     results.append({"goal": g["name"], "t": round(t - t0, 1), "declared": True,
                                     "true_dist": round(math.hypot(true[0] - g["xy"][0], true[1] - g["xy"][1]), 3),
                                     "room_said": room_name(est[0], est[1]), "room_true": room_name(true[0], true[1])})
