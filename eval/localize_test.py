@@ -30,6 +30,7 @@ spec.loader.exec_module(tofmod)
 house = json.loads((ROOT / "out/current/house.json").read_text())
 frame = json.loads((ROOT / "out/current/sim_frame.json").read_text())
 ZERO = "--zero-stickers" in sys.argv
+SEED = int(sys.argv[sys.argv.index("--seed") + 1]) if "--seed" in sys.argv else 0
 OUT = ROOT / ("out/localize" + ("_zero" if ZERO else "") + ("_imperfect" if "--imperfect-map" in sys.argv else "")
               + (f"/seed{sys.argv[sys.argv.index('--seed') + 1]}" if "--seed" in sys.argv else ""))
 OUT.mkdir(parents=True, exist_ok=True)
@@ -86,7 +87,6 @@ def sense(x, y, yaw):
     return rgb, perceive.markers(cv.cvtColor(rgb, cv.COLOR_RGB2GRAY), K, sizes), tof.frame(data)
 
 
-SEED = int(sys.argv[sys.argv.index("--seed") + 1]) if "--seed" in sys.argv else 0
 rng = np.random.default_rng(7 + SEED)
 truth = truth_path()
 IMPERFECT = "--imperfect-map" in sys.argv
@@ -127,8 +127,8 @@ def seen_objects(x, y, yaw):
     return out
 
 xml = (ROBOT / "twin_eye.xml").read_text().replace("BAG", f'<geom type="box" pos="{bx_:.3f} {by_:.3f} 0.15" size="0.1 0.15 0.15" rgba="0.2 0.3 0.6 1"/>' if IMPERFECT else "")
-(ROBOT / f"twin_eye_run{'_imperfect' if IMPERFECT else ''}.xml").write_text(xml)
-model = mujoco.MjModel.from_xml_path(str(ROBOT / f"twin_eye_run{'_imperfect' if IMPERFECT else ''}.xml"))
+(ROBOT / f"twin_eye_run{'_imperfect' if IMPERFECT else ''}{SEED}.xml").write_text(xml)
+model = mujoco.MjModel.from_xml_path(str(ROBOT / f"twin_eye_run{'_imperfect' if IMPERFECT else ''}{SEED}.xml"))
 data = mujoco.MjData(model)
 renderer = mujoco.Renderer(model, 640, 480)
 tof = tofmod.Tof(model, model.site("tof").id, seed=1)

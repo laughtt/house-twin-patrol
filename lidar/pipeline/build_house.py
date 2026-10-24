@@ -26,6 +26,8 @@ def build(src, out=None, detect_fn=upright_detect, every=2, extra_markers=None, 
     lap = lambda k: tm.__setitem__(k, time.time() - tic - sum(tm.values()))  # noqa: E731
     ex = Export(src)
     frames = [f for f in ex.frames if f["tracking"] == "normal"]
+    if not frames:
+        raise ValueError(f"{ex.session}: no frame with normal tracking (more light, slower walk)")
     out = Path(out or ROOT / "out" / "lidar" / ex.session)
     out.mkdir(parents=True, exist_ok=True)
     sc = fuse.fuse(ex, frames)
@@ -34,6 +36,8 @@ def build(src, out=None, detect_fn=upright_detect, every=2, extra_markers=None, 
     walls = [w_[:5] for w_ in walls_full]
     lap("rooms_s")
     cands = lmk.tagged(ex, frames, sc, walls, lmk.candidates(ex, frames, sc, zones, walls, detect_fn, every))
+    near_zone = lambda xy: any(r[0] - 0.3 <= xy[0] <= r[2] + 0.3 and r[1] - 0.3 <= xy[1] <= r[3] + 0.3 for z in zones for r in z["rects"])  # noqa: E731
+    cands = [c for c in cands if c["source"] == "user" or near_zone(c["center"])]  # not things seen through a window
     for c in cands:
         c["room"] = zone_at(zones, c["center"])
     crops = {c["id"]: lmk.crop(ex, frames, sc, c) for c in cands} if use_model else {}
@@ -45,7 +49,7 @@ def build(src, out=None, detect_fn=upright_detect, every=2, extra_markers=None, 
     objects = [ob for s in spaces for ob in furniture(sc.V, s, landmarks)]
     lap("objects_s")
     markers = H.scan_markers(ex, frames, sc, zones)
-    o = np.array(max(spaces, key=lambda s: s["mask"].sum())["polygon"]).min(0)  # origin: lower-left of the largest space
+    o = np.concatenate([np.array(s["polygon"]) for s in spaces]).min(0)  # origin: lower-left of the whole house (all x, y ≥ 0)
     if extra_markers and not markers:
         markers = H.hand_markers(extra_markers, o, walls_full, objects)
     house = H.assemble(ex.session, sc, spaces, zones, walls_full, doors, objects, landmarks, markers, colours, o)

@@ -8,6 +8,7 @@ import numpy as np
 
 from twin import CFG, ROOT
 from twin.fuse import vkey
+from twin.scan_io import clean_tags
 
 sys.path[:0] = [str(ROOT), str(ROOT / "service")]
 from agent.perceive import colour_hist  # noqa: E402
@@ -154,13 +155,14 @@ def tagged(ex, frames, sc, walls, cands):
     """The user's tags (crosshair + label): name the candidate under the crosshair, or add the object as a new one."""
     at = {f["i"]: k for k, f in enumerate(frames)}
     w, h = sc.wh
-    for t in ex.tags():
-        if not at or not t.get("label"):
+    for t in clean_tags(ex.tags()):
+        near_i = min(at, key=lambda i: abs(i - t["i"]), default=None)
+        if near_i is None or abs(near_i - t["i"]) > 5:  # its frame is gone (tracking was limited): nothing to aim with
             continue
-        k = at.get(t["i"], at[min(at, key=lambda i: abs(i - t["i"]))])
+        k = at[near_i]
         f, P = frames[k], sc.poses[k]
         d, _ = ex.load(f, conf=1)
-        u, v = (t.get("uv") or [0.5, 0.5])
+        u, v = t["uv"]
         for r in (3, 8, 16):
             win = d[max(int(v * h) - r, 0):int(v * h) + r + 1, max(int(u * w) - r, 0):int(u * w) + r + 1]
             if (win > 0).any():
@@ -204,7 +206,9 @@ def crop(ex, frames, sc, c, side=256):
 def finish(cands, decisions):
     """Apply the keep / label / merge / mobility decisions → house.json landmarks (pre-origin frame)."""
     by = {c["id"]: c for c in cands}
-    root = lambda i: root(decisions[i]["merge_into"]) if decisions[i].get("merge_into") in by and decisions[i]["merge_into"] != i else i  # noqa: E731
+    def root(i, seen=()):
+        j = decisions[i].get("merge_into")
+        return root(j, (*seen, i)) if isinstance(j, str) and j in by and j != i and j not in seen else i
     for c in cands:
         r = root(c["id"])
         if r != c["id"]:

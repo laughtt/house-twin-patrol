@@ -51,9 +51,7 @@ class Export:
 
     def tags(self):
         """Objects the user labelled under the crosshair: [{i, label, uv, room}]. The review screen's list wins."""
-        if "tags" in self.labels:
-            return self.labels["tags"]
-        return [{k: e.get(k) for k in ("i", "label", "uv", "room")} for e in self.events() if e.get("event") == "tag"]
+        return clean_tags(self.labels["tags"] if "tags" in self.labels else [e for e in self.events() if e.get("event") == "tag"])
 
     def load(self, f, conf=2):
         w, h = f["depth_wh"]
@@ -67,3 +65,16 @@ class Export:
 
     def rgb(self, f):
         return cv.imdecode(np.frombuffer(self.read(f["rgb"]), np.uint8), cv.IMREAD_COLOR)
+
+
+def clean_tags(raw):
+    """Drop malformed tags (they come from a phone file); trim labels to 40 characters (they reach a model's prompt)."""
+    out = []
+    for t in raw if isinstance(raw, list) else []:
+        if not isinstance(t, dict) or type(t.get("i")) is not int or not isinstance(t.get("label"), str) or not t["label"].strip():
+            continue
+        uv = t.get("uv") or [0.5, 0.5]
+        if not (isinstance(uv, list) and len(uv) == 2 and all(isinstance(v, (int, float)) and 0 <= v <= 1 for v in uv)):
+            continue
+        out.append({"i": t["i"], "label": t["label"].strip()[:40], "uv": uv, "room": t.get("room")})
+    return out

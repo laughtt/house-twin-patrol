@@ -143,7 +143,7 @@ def test_nan_tof_zone_keeps_evidence():
     d = d.copy()
     d[3 * 8 + 4] = np.nan
     pf.update_tof(d, s)
-    share = float(pf.w[:1000].sum())
+    share = float(pf.w[np.hypot(pf.p[:, 0] - POSE[0], pf.p[:, 1] - POSE[1]) < 0.5].sum())  # by place: resampling reorders particles
     sim.report("nan_tof_zone", share > 0.9, f"weight on the true place after the update {share:.2f} (>0.9; 0.50 = evidence thrown away)")
 
 

@@ -25,7 +25,7 @@ def route(hmap, start, goal):
     """A* on the map grown by the duck's radius, then pulled tight to straight runs between corners."""
     k = 2 * int(RADIUS / CELL) + 1
     blocked = cv.dilate(hmap.grid.astype(np.uint8), cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))).astype(bool)
-    cell = lambda p: (int(p[1] / CELL) + 1, int(p[0] / CELL) + 1)
+    cell = lambda p: (int((p[1] - hmap.o[1]) / CELL) + 1, int((p[0] - hmap.o[0]) / CELL) + 1)  # noqa: E731
     s, g = cell(start), cell(goal)
     blocked[s] = blocked[g] = False
     came, cost, todo = {s: None}, {s: 0.0}, [(0.0, s)]
@@ -47,7 +47,7 @@ def route(hmap, start, goal):
     while c:
         cells.append(c)
         c = came[c]
-    pts = [((j - 1 + 0.5) * CELL, (i - 1 + 0.5) * CELL) for i, j in cells[::-1]]
+    pts = [((j - 1 + 0.5) * CELL + hmap.o[0], (i - 1 + 0.5) * CELL + hmap.o[1]) for i, j in cells[::-1]]
     clear = lambda a, b: all(not blocked[cell((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))] for t in np.linspace(0, 1, 40))
     out = [pts[0]]
     for i in range(1, len(pts)):
