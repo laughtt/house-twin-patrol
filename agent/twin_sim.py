@@ -35,7 +35,8 @@ class TwinSim:
     def __init__(self, house_dir=ROOT / "out/current", seed=0, extra_geoms=""):
         house_dir = Path(house_dir)
         self.house = json.loads((house_dir / "house.json").read_text())
-        frame = json.loads((house_dir / "sim_frame.json").read_text())
+        f = house_dir / "sim_frame.json"  # written by `python -m twin sim`; any frame works for a test of its own
+        frame = json.loads(f.read_text()) if f.exists() else {"theta": 0.0, "pos": [0.0, 0.0]}
         self.th, (self.px, self.py) = frame["theta"], frame["pos"]
         self.world = HouseMap(self.house)
         k = 2 * int(RADIUS / CELL) + 1

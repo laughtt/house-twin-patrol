@@ -263,6 +263,11 @@ def lidar_capture(session: str, x_api_key: str = Header("")):
             "low_h": __import__("twin").CFG["landmarks"]["low_h"], "mb": round((session_dir(session) / "lidar.zip").stat().st_size / 1e6)}
 
 
+@app.get("/lidar/flow")
+def lidar_flow():
+    return FileResponse(ROOT / "static/flow.html", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/lidar/mission")
 def lidar_mission():
     return FileResponse(ROOT / "static/mission.html", headers={"Cache-Control": "no-cache"})

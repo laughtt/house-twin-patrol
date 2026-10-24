@@ -129,7 +129,7 @@ def main():
     ap.add_argument("--seeds", type=int, default=8)
     a = ap.parse_args()
     house_dir = Path(a.house).resolve()
-    out = ROOT / "out/mission" / house_dir.name
+    out = ROOT / "out/mission" / (house_dir.name if house_dir.name != "house" else house_dir.parent.name)
     with ProcessPoolExecutor(max_workers=8) as pool:
         eps = list(pool.map(episode, [(house_dir, s, out) for s in range(a.seeds)]))
     goal_list = goals(TwinSim(house_dir))
