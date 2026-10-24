@@ -119,7 +119,7 @@ class ParticleFilter:
         frame = np.r_[meas.ravel(), valid.ravel()]
         frozen = self.last_tof is not None and np.array_equal(frame, self.last_tof)
         self.last_tof = frame
-        if frozen or (valid.any() and (meas[valid] < 0.05).all()):  # a stuck sensor, or something covering it
+        if frozen or not valid.any() or (meas[valid] < 0.05).all():  # stuck, blind ("nothing within 4 m" indoors) or covered
             return
         meas = np.where(valid, meas, TOF_MAX + 1.0).mean(0)  # rows 3 and 4 look 2.8° up and down: average them
         x, y, yaw = (np.repeat(self.p[:, k:k + 1], 8, 1) for k in range(3))
