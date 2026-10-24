@@ -191,6 +191,7 @@ function render(st, cap) {
       <img class="pic" id="occpic" alt="What a 20 cm high sensor can hit">
       <div class="legend">Cyan: surfaces 10–40 cm high (what the duck's sensor hits) · grey: any height.</div>
       <a class="btn" href="/lidar/3d?s=${sid()}">View your home in 3D</a>
+      <a class="btn" href="/lidar/mission?s=${sid()}">Next: the duck's patrol (steps 3–4)</a>
       ${think('<p>On your flat, the duck following your route in the simulated twin finds itself in about 20 s with no stickers and stays within 0.3 m about 89 % of the time (3.5 cm typical). The rest happens in the big open middle, where its 4 m sensor sees nothing and no landmark is in view.</p>', true)}`),
   ];
   $('out').innerHTML = html.join('') + `<div class="card"><h2>What the duck gets</h2><p>One <code>house.json</code>: ${esc(space)}, ${r.walls} walls,

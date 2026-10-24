@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Duck Patrol</title>
+<style>
+:root{--bg:#f6f5f1;--fg:#1c1b19;--muted:#6b6862;--card:#fff;--line:#e2dfd8;--accent:#1f6feb;--ok:#1a7f37;--warn:#b35900;--bad:#c62828;--chip:#eef2ff;--think:#f3f0ff;--map:#fbfaf7;--wall:#2b2a28}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121211;--fg:#eceae4;--muted:#9a978f;--card:#1d1c1a;--line:#33312d;--accent:#3b82f6;--ok:#2ea043;--warn:#d9822b;--bad:#e5484d;--chip:#1e2433;--think:#221f2e;--map:#171716;--wall:#d8d5cc}}
+:root[data-theme="dark"]{--bg:#121211;--fg:#eceae4;--muted:#9a978f;--card:#1d1c1a;--line:#33312d;--accent:#3b82f6;--ok:#2ea043;--warn:#d9822b;--bad:#e5484d;--chip:#1e2433;--think:#221f2e;--map:#171716;--wall:#d8d5cc}
+*{box-sizing:border-box}
+html,body{overflow-x:hidden}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,sans-serif}
+main{max-width:900px;margin:0 auto;padding:16px}
+h1{font-size:1.5rem;margin:8px 0 4px}
+h2{font-size:1.15rem;margin:0}
+.muted{color:var(--muted);font-size:.9rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:14px 0;min-width:0;overflow-wrap:anywhere}
+.head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}
+.num{display:inline-block;background:var(--accent);color:#fff;border-radius:999px;min-width:34px;height:26px;padding:0 8px;text-align:center;line-height:26px;font-weight:700;margin-right:8px;font-size:.85rem}
+code{font-size:.82rem;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.io{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;margin:10px 0;font-size:.9rem}
+.io div{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px}
+.io span{color:var(--muted)}
+.stats{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.stat{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:6px 10px;min-width:90px}
+.stat b{display:block;font-size:1.15rem}
+.stat span{font-size:.78rem;color:var(--muted)}
+details{background:var(--think);border-radius:10px;padding:8px 12px;margin:8px 0}
+details summary{cursor:pointer;font-weight:600}
+.lesson{border-left:4px solid var(--warn);padding:6px 10px;margin:8px 0;background:var(--bg);border-radius:0 8px 8px 0;font-size:.92rem}
+.lesson b{color:var(--warn)}
+canvas#map{width:100%;display:block;background:var(--map);border:1px solid var(--line);border-radius:10px;touch-action:none}
+.controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0}
+.controls input[type=range]{flex:1;min-width:140px}
+select,button{font:inherit;padding:7px 10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg)}
+button.primary{background:var(--accent);color:#fff;border:0;font-weight:600}
+.hud{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px;margin-top:8px;font-size:.88rem}
+.hud div{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:6px 10px}
+.hud b{display:block}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:4px}
+.bar i{display:block;height:100%;background:var(--accent)}
+table{border-collapse:collapse;width:100%;font-size:.86rem}
+td,th{border-bottom:1px solid var(--line);padding:5px 4px;text-align:left;vertical-align:top}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.legend{font-size:.8rem;color:var(--muted);margin-top:4px}
+@media (max-width:560px){.io{grid-template-columns:1fr}.io span{display:none}}
+</style>
+</head>
+<body>
+<main>
+<h1>The duck's patrol in its twin home</h1>
+<p class="muted">Steps 3 and 4. The house you scanned becomes a simulated home; the duck is put down somewhere it doesn't know,
+finds itself without stickers, then visits every room (or every landmark that stays put), steering by where it thinks it
+is. The simulator knows the truth and keeps the score.</p>
+<div class="card head"><select id="sid" aria-label="Scan" onchange="load()" style="flex:1;min-width:0"></select><span class="muted" id="sum"></span></div>
+<div id="out"><div class="card muted">Loading…</div></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const store = {get: k => { try { return JSON.parse(localStorage.getItem(k)) } catch { return null } },
+               set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }};
+const q = new URLSearchParams(location.search);
+if (q.get('k')) store.set('key', q.get('k'));
+const KEY = q.get('k') || store.get('key') || '';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
+const api = path => fetch(path, {headers: {'X-API-Key': KEY}}).then(r => r.ok ? r : Promise.reject(new Error(r.status)));
+const sid = () => encodeURIComponent($('sid').value);
+const stat = (v, l) => `<div class="stat"><b>${esc(v)}</b><span>${esc(l)}</span></div>`;
+const io = (i, o) => `<div class="io"><div><span>In:</span> ${i}</div><span>→</span><div><span>Out:</span> ${o}</div></div>`;
+const think = (t, open) => `<details${open ? ' open' : ''}><summary>Thinking: why it works this way</summary>${t}</details>`;
+const lesson = t => `<div class="lesson"><b>Learned while building it:</b> ${t}</div>`;
+let house, mission, ep = 0, k = 0, playing = false, speed = 4, last = 0;
+
+async function start() {
+  if (!KEY) return $('out').innerHTML = '<div class="card bad">Missing access key: open the full link once (it ends in ?k=…).</div>';
+  const ids = await (await api('/lidar/sessions')).json();
+  $('sid').innerHTML = ids.map(i => `<option>${esc(i)}</option>`).join('');
+  if (q.get('s') && ids.includes(q.get('s'))) $('sid').value = q.get('s');
+  load();
+}
+
+async function load() {
+  playing = false;
+  try {
+    [house, mission] = await Promise.all([api(`/lidar/file?session=${sid()}&name=house.json`).then(r => r.json()),
+                                          api(`/lidar/file?session=${sid()}&name=mission.json`).then(r => r.json())]);
+  } catch (e) {
+    return $('out').innerHTML = '<div class="card">No patrol has been simulated for this scan yet (run <code>python -m agent.mission</code>).</div>';
+  }
+  house = mission.house || house;
+  render();
+}
+
+function card(n, name, file, body) {
+  return `<section class="card"><div class="head"><h2><span class="num">${n}</span>${name}</h2><code>${esc(file)}</code></div>${body}</section>`;
+}
+
+function render() {
+  const s = mission.summary, E = mission.episodes;
+  const reached = E.reduce((a, e) => a + e.reached, 0), goals = E.reduce((a, e) => a + e.goals, 0);
+  const rooms = house.rooms.length > 1;
+  $('sum').textContent = `${E.length} patrols · ${mission.goals.length} ${rooms ? 'rooms' : 'landmarks'} each`;
+  $('out').innerHTML = `
+  <div class="card"><h2>Scorecard</h2>
+    <div class="stats">${stat(`${reached}/${goals}`, rooms ? 'rooms reached' : 'landmarks reached')}${stat(s.found_s_median + ' s', 'to find itself (median)')}
+      ${stat(Math.round(s.err_when_sure_median_m * 100) + ' cm', 'error when sure')}${stat(s.room_right_pct_median + ' %', 'right room when sure')}
+      ${stat(s.bumps_total, 'bumps (all patrols)')}</div>
+    <div class="muted">Reached = the duck said "I'm here" and was really within 50 cm. Goals: ${mission.goals.map(g => esc(g.name)).join(', ')}.</div></div>
+  <div class="card"><h2>Watch a patrol</h2>
+    <div class="controls"><select id="ep" aria-label="Patrol">${E.map((e, i) => `<option value="${i}">Patrol ${i + 1}: ${e.reached}/${e.goals} reached, found itself in ${e.found_s ?? '–'} s</option>`).join('')}</select>
+      <button class="primary" id="play">▶ Play</button>
+      <select id="speed" aria-label="Speed"><option value="1">1×</option><option value="4" selected>4×</option><option value="16">16×</option></select></div>
+    <canvas id="map" aria-label="Map of the patrol"></canvas>
+    <div class="controls"><input type="range" id="scrub" min="0" value="0" aria-label="Time"><span id="clock" class="muted"></span></div>
+    <div class="hud" id="hud"></div>
+    <div class="legend">Black line + filled triangle: where the duck really is · blue line + hollow triangle: where it thinks it is ·
+      dashed: where it is heading · numbered circles: goals (green ✓ = reached) · red flash: bump.</div></div>
+  ${card('3a', 'Twin home', 'twin/to_mjcf.py → agent/twin_sim.py', `<p>house.json becomes a MuJoCo scene: walls, floors, furniture as boxes (tables and chairs on legs, so the duck can walk under them).</p>
+    ${io('house.json', 'a physics scene of your home')}${think('<p>The simulator builds its own copy of the scene for every run, so several houses and patrols run side by side. The twin is the map: what the duck senses here matches what its tracker expects, which tests the brain, not the scan.</p>')}`)}
+  ${card('3b', 'Duck senses', 'agent/twin_sim.py', `<p>A camera 20 cm above the floor, Pollen's 8×8 distance-sensor model (4 m range), and odometry that drifts like a walking duck's (4 % long, 2 % sideways, about 3° per metre).</p>
+    ${io('the duck\'s true pose in the twin', 'distance frame, objects seen, odometry')}
+    ${think('<p>The twin\'s furniture is plain boxes, which a real object detector can\'t name. So objects come from a stand-in: the true landmarks in view and not hidden, with 70 % seen, 3° bearing noise, 10 % wrong names and 5 % false sightings. The real detector is tested on real photos instead.</p>')}
+    ${lesson('when the duck pushes against a wall its legs keep stepping. Counting those steps moved its guess while its body stood still, so it kept walking into the same wall. A real duck feels the stall (its body motion sensor stops), so the simulated one now counts no forward motion when blocked, backs off and replans.')}`)}
+  ${card('4a', 'Where am I', 'agent/localize.py', `<p>2,000 guesses spread over every free spot. Each distance frame and each object sighting reweights them; objects that never move count most. When most of the weight sits in one place, the duck is "sure".</p>
+    ${io('distance frame, objects, odometry', 'best guess + how sure (0–1)')}
+    <div class="stats">${stat(s.found_s_median + ' s', 'to be sure and right (median)')}${stat(Math.round(s.err_when_sure_median_m * 100) + ' cm', 'error when sure')}</div>
+    ${think('<p>Distance readings alone can\'t tell look-alike corners apart; one sighting of the fridge or the bathtub can. If trusted sightings keep not fitting, some guesses are re-seeded around them: that is how it recovers when picked up and moved.</p>')}`)}
+  ${card('4b', 'Route', 'agent/loop.py route()', `<p>A* on the map grown by the duck's width plus a safety margin, pulled tight into straight runs between corners. Replanned every 2 s from the current guess.</p>
+    ${io('guess + goal + map', 'corner points to walk through')}
+    ${lesson('with only 2 cm between the planned margin (12 cm) and the duck\'s half width (10 cm), a 5 cm guessing error meant constant bumps: 2 of 24 rooms reached and over 1,000 bumps. With an 18 cm margin: 23 of 24 rooms and no bumps.')}`)}
+  ${card('4c', 'Decide', 'agent/mission.py', `<p>Each step (5 per second): not sure → turn on the spot and look around; sure → walk the route; within 25 cm of the goal (by its own guess) → say "I'm here, in the kitchen" and take the next goal. After 12 bumps on one goal or 2 minutes it gives up on that goal, like a patrol would.</p>
+    ${io('guess, confidence, route', 'look / go / back off, and arrivals')}
+    ${think('<p>No AI model runs in this loop: it is plain geometry and probability, cheap enough for the duck\'s own computer. A language model only appears outside the loop (Haiku checking the landmark list once per scan).</p>')}`)}
+  ${card('4d', 'Move', 'agent/mission.py → agent/twin_sim.py move()', `<p>Steering: turn toward the next corner of the route, walk at 0.25 m/s, slow down sharply when the heading is off.</p>
+    ${lesson('aiming at a point 30 cm along the route made the duck cut corners between two route corners and clip furniture. It now keeps aiming at the current corner until 12 cm from it.')}`)}
+  ${card('4e', 'Score', 'agent/mission.py', `<p>The simulator knows where the duck really is, so every claim is checked: arrived for real (within 50 cm)? right room? how far off was the guess while it was sure? how many bumps?</p>
+    <table><tr><th>Patrol</th><th>Reached</th><th>Found itself</th><th>Time</th><th>Bumps</th><th>Right room</th></tr>
+    ${E.map((e, i) => `<tr><td>${i + 1}</td><td class="${e.reached === e.goals ? 'ok' : 'warn'}">${e.reached}/${e.goals}</td><td>${e.found_s ?? '–'} s</td><td>${Math.round(e.time_s)} s</td><td>${e.bumps}</td><td>${e.room_right_pct ?? '–'} %</td></tr>`).join('')}</table>`)}`;
+  $('ep').onchange = e => { ep = +e.target.value; k = 0; setup(); };
+  $('play').onclick = () => { playing = !playing; $('play').textContent = playing ? '❚❚ Pause' : '▶ Play'; last = performance.now(); if (playing) requestAnimationFrame(tick); };
+  $('speed').onchange = e => speed = +e.target.value;
+  $('scrub').oninput = e => { k = +e.target.value; draw(); };
+  addEventListener('resize', () => { size(); draw(); });
+  setup();
+}
+
+let B, sc, cx;
+function size() {
+  const c = $('map'), xs = house.walls.flatMap(w => [w.a[0], w.b[0]]), ys = house.walls.flatMap(w => [w.a[1], w.b[1]]);
+  B = {x0: Math.min(...xs) - 0.3, x1: Math.max(...xs) + 0.3, y0: Math.min(...ys) - 0.3, y1: Math.max(...ys) + 0.3};
+  const W = c.clientWidth, H = Math.min(W * (B.y1 - B.y0) / (B.x1 - B.x0), innerHeight * 0.7);
+  sc = Math.min(W / (B.x1 - B.x0), H / (B.y1 - B.y0));
+  c.style.height = `${(B.y1 - B.y0) * sc}px`;
+  c.width = W * devicePixelRatio; c.height = (B.y1 - B.y0) * sc * devicePixelRatio;
+  cx = c.getContext('2d'); cx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+}
+const P = (x, y) => [(x - B.x0) * sc, (B.y1 - y) * sc];
+
+function setup() {
+  size();
+  $('scrub').max = mission.episodes[ep].steps.length - 1;
+  draw();
+}
+
+function tick(now) {
+  if (!playing) return;
+  const steps = mission.episodes[ep].steps;
+  k = Math.min(steps.length - 1, k + Math.max(1, Math.round((now - last) / 200 * speed)));
+  last = now;
+  $('scrub').value = k;
+  draw();
+  if (k >= steps.length - 1) { playing = false; $('play').textContent = '▶ Play'; return; }
+  requestAnimationFrame(tick);
+}
+
+function tri(x, y, yaw, fill, color) {
+  const [px, py] = P(x, y), r = Math.max(7, sc * 0.18);
+  cx.beginPath();
+  [[r, 0], [-r * 0.7, r * 0.6], [-r * 0.7, -r * 0.6]].forEach(([u, v], i) => {
+    const qx = px + u * Math.cos(-yaw) - v * Math.sin(-yaw), qy = py + u * Math.sin(-yaw) + v * Math.cos(-yaw);
+    i ? cx.lineTo(qx, qy) : cx.moveTo(qx, qy);
+  });
+  cx.closePath();
+  cx.strokeStyle = color; cx.lineWidth = 2; cx.stroke();
+  if (fill) { cx.fillStyle = color; cx.fill(); }
+}
+
+function draw() {
+  const css = getComputedStyle(document.documentElement), e = mission.episodes[ep], S = e.steps, s = S[k];
+  const c = $('map');
+  cx.clearRect(0, 0, c.width, c.height);
+  house.rooms.forEach((r, i) => { cx.fillStyle = ['rgba(59,130,246,.08)', 'rgba(16,185,129,.08)', 'rgba(245,158,11,.08)', 'rgba(168,85,247,.08)'][i % 4];
+    cx.beginPath(); r.polygon.forEach((p, j) => { const [x, y] = P(...p); j ? cx.lineTo(x, y) : cx.moveTo(x, y); }); cx.fill(); });
+  cx.fillStyle = css.getPropertyValue('--line');
+  house.objects.forEach(o => { const [x, y] = P(o.center[0] - o.size[0] / 2, o.center[1] + o.size[1] / 2); cx.fillRect(x, y, o.size[0] * sc, o.size[1] * sc); });
+  cx.strokeStyle = css.getPropertyValue('--wall'); cx.lineCap = 'round';
+  house.walls.forEach(w => { cx.lineWidth = Math.max(2, w.t * sc); cx.beginPath(); cx.moveTo(...P(...w.a)); cx.lineTo(...P(...w.b)); cx.stroke(); });
+  cx.fillStyle = '#f59e0b'; cx.font = '11px system-ui';
+  house.landmarks.forEach(l => { const [x, y] = P(...l.center); cx.fillText('★', x - 4, y + 4); });
+  const done = new Set(e.arrivals.filter(a => a.t <= s[0] && a.true_dist < 0.5).map(a => a.goal));
+  mission.goals.forEach((g, i) => { const [x, y] = P(...g.xy); cx.beginPath(); cx.arc(x, y, 10, 0, 7);
+    cx.fillStyle = done.has(g.name) ? css.getPropertyValue('--ok') : (s[9] === i ? css.getPropertyValue('--accent') : 'rgba(128,128,128,.5)'); cx.fill();
+    cx.fillStyle = '#fff'; cx.font = 'bold 11px system-ui'; cx.fillText(done.has(g.name) ? '✓' : i + 1, x - 4, y + 4); });
+  const path = (a, b, color, w) => { cx.strokeStyle = color; cx.lineWidth = w; cx.beginPath();
+    S.slice(0, k + 1).forEach((p, j) => { const [x, y] = P(p[a], p[b]); j ? cx.lineTo(x, y) : cx.moveTo(x, y); }); cx.stroke(); };
+  path(1, 2, css.getPropertyValue('--wall'), 2);
+  if (s[7] >= 0.6) path(4, 5, 'rgba(59,130,246,.65)', 1.5);
+  if (s[10] != null) { cx.setLineDash([5, 5]); cx.strokeStyle = css.getPropertyValue('--accent'); cx.lineWidth = 1.5; cx.beginPath();
+    cx.moveTo(...P(s[4], s[5])); cx.lineTo(...P(s[10], s[11])); cx.stroke(); cx.setLineDash([]); }
+  tri(s[1], s[2], s[3], true, s[12] ? css.getPropertyValue('--bad') : css.getPropertyValue('--wall'));
+  tri(s[4], s[5], s[6], false, css.getPropertyValue('--accent'));
+  const err = Math.hypot(s[4] - s[1], s[5] - s[2]), goal = mission.goals[s[9]]?.name ?? '–';
+  const room = (x, y) => { const r = house.rooms.find(r => r.rects.some(q => q[0] <= x && x <= q[2] && q[1] <= y && y <= q[3])); return r ? r.name : '–'; };
+  $('clock').textContent = `${Math.floor(s[0] / 60)}:${String(Math.round(s[0] % 60)).padStart(2, '0')}`;
+  $('hud').innerHTML = `<div><b>${esc(mission.modes[s[8]])}</b>what it's doing</div>
+    <div><b>${esc(goal)}</b>heading for</div>
+    <div><b>${Math.round(s[7] * 100)} %</b>how sure<div class="bar"><i style="width:${s[7] * 100}%"></i></div></div>
+    <div><b class="${err < 0.3 ? 'ok' : 'bad'}">${err < 10 ? Math.round(err * 100) + ' cm' : '–'}</b>guess vs truth</div>
+    <div><b>${esc(room(s[4], s[5]))}</b>room it thinks</div>
+    <div><b>${esc(s[13] ? s[13].split('+').join(', ') : 'nothing')}</b>objects in view</div>`;
+}
+start();
+</script>
+</body>
+</html>

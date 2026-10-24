@@ -250,6 +250,12 @@ class ParticleFilter:
         self.last = (float(np.average(self.p[:, 0], weights=w)), float(np.average(self.p[:, 1], weights=w)))
         return (*self.last, math.atan2(np.sum(w * np.sin(self.p[:, 2])), np.sum(w * np.cos(self.p[:, 2]))))
 
+    def confidence(self):
+        """Share of the weight within 50 cm of the last estimate: near 1 = sure where it is, low = several places fit."""
+        if getattr(self, "last", None) is None:
+            self.estimate()
+        return float(self.w[np.hypot(self.p[:, 0] - self.last[0], self.p[:, 1] - self.last[1]) < 0.5].sum())
+
     def _normalise(self):
         total = self.w.sum()
         self.w = self.w / total if total > 0 and np.isfinite(total) else np.full(self.n, 1 / self.n)
