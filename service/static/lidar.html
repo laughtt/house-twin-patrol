@@ -27,6 +27,9 @@ td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertic
 .ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
 .tbl{overflow-x:auto}
 ul{margin:6px 0;padding-left:20px}
+html,body{overflow-x:hidden}
+.card{min-width:0;overflow-wrap:anywhere}
+.fix{padding:4px 10px;font-size:.8rem;margin-top:4px}
 .strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(90px,1fr));gap:6px;max-height:420px;overflow-y:auto}
 .strip img{width:100%;border-radius:6px;border:1px solid var(--line);cursor:pointer;aspect-ratio:3/4;object-fit:cover;background:var(--line)}
 #modal{position:fixed;inset:0;background:rgba(0,0,0,.85);display:none;flex-direction:column;align-items:center;justify-content:center;padding:12px;z-index:9}
@@ -53,7 +56,6 @@ detector finds landmarks, and a small model (Claude Haiku) checks which ones the
   <div class="labels" id="mlabels"></div>
   <div class="row"><input id="mcustom" placeholder="Other name…" style="max-width:220px"><button onclick="pick($('mcustom').value)">Add</button><button class="ghost" style="color:#fff" onclick="closeModal()">Cancel</button></div>
 </div>
-<script>
 <script>
 const $ = id => document.getElementById(id);
 const store = {get: k => { try { return JSON.parse(localStorage.getItem(k)) } catch { return null } },
@@ -100,10 +102,11 @@ function card(r) {
   const spaces = Object.entries(rep.spaces).map(([n, v]) => `<li>${esc(n)}: ${v.w_m} × ${v.l_m} m (${v.area_m2} m²)</li>`).join('');
   const rows = r.candidates.map(c => {
     const d = c.decision, kept = d.keep && d.mobility !== 'ignore' && !c.merged;
-    return `<tr><td>${esc(c.source === 'user' ? c.label : d.label)}${c.source === 'user' ? ' <span class="muted">(your tag)</span>' : ''}</td>
-      <td>${esc(c.cls || '–')}</td><td class="${kept ? 'ok' : 'muted'}">${kept ? esc(d.mobility) : (d.merge_into ? 'merged → ' + esc(d.merge_into) : 'dropped')}</td>
-      <td>${c.views} / ${c.low_views}</td><td class="muted">${esc(d.reason)}</td>
-      <td>${c.view ? `<button class="ghost" onclick="fix('${esc(c.id)}')">Fix</button>` : ''}</td></tr>`;
+    return `<tr><td><b>${esc(c.source === 'user' ? c.label : d.label)}</b>${c.source === 'user' ? ' <span class="muted">(your tag)</span>' : ''}
+      <div class="muted">detector: ${esc(c.cls || '–')} · ${c.views} views</div>
+      ${c.view ? `<button class="ghost fix" onclick="fix('${esc(c.id)}')">Fix</button>` : ''}</td>
+      <td class="${kept ? 'ok' : 'muted'}">${kept ? esc(d.mobility) : (d.merge_into ? 'merged → ' + esc(d.merge_into) : 'dropped')}</td>
+      <td class="muted">${esc(d.reason)}</td></tr>`;
   }).join('');
   return `<div class="card"><h2>${esc(rep.session)}</h2>
     <div class="muted">${rep.frames_used} frames, ${rep.frames_low} at duck height · ${rep.doors} doors · ${rep.objects} furniture · ${rep.tags} tags</div>
@@ -112,7 +115,7 @@ function card(r) {
     <div class="card"><h2>Landmarks: ${rep.landmarks} kept of ${rep.landmark_candidates}</h2>
     <div class="muted">Checked by ${esc(cur.by || '?')}${cur.answered ? ` (${esc(cur.answered)} answered)` : ''}${cur.error ? ` · <span class="warn">model unavailable: ${esc(cur.error)}</span>` : ''}</div>
     ${(cur.warnings || []).length ? `<ul class="warn">${cur.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
-    <div class="tbl"><table><tr><th>Landmark</th><th>Detector</th><th>Trust</th><th>Views / low</th><th>Why</th><th></th></tr>${rows}</table></div></div>`;
+    <div class="tbl"><table><tr><th>Landmark</th><th>Trust</th><th>Why</th></tr>${rows}</table></div></div>`;
 }
 async function tagger() {
   const [frames, saved] = await Promise.all([(await api(`/lidar/frames?session=${sid()}`)).json(), (await api(`/lidar/tags?session=${sid()}`)).json()]);
