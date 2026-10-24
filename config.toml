@@ -31,14 +31,27 @@ low_h = 0.75       # a frame is "duck height" when the camera is lower than this
 min_views = 3      # without the curate model: detector landmarks seen in fewer keyframes are dropped (tags always kept)
 # how much the duck trusts a sighting, by how often that kind of thing moves ("ignore" = not a landmark)
 weight = { fixed = 1.0, rare = 0.6, often = 0.2 }
-fixed = ["fridge", "oven", "stove", "sink", "counter", "toilet", "washer", "wardrobe", "door", "window", "bathtub"]
-often = ["chair", "potted plant", "plant", "bench", "suitcase", "backpack", "handbag", "umbrella", "bicycle"]
-ignore = ["person", "dog", "cat", "cup", "bottle", "wine glass", "bowl", "cell phone", "book", "remote", "teddy bear"]
+# the home vocabulary: every label the checkers may give, grouped by how often it moves (anything else counts as "rare")
+fixed = ["fridge", "oven", "stove", "sink", "kitchen counter", "counter", "toilet", "bathtub", "shower", "washer", "dishwasher",
+         "wardrobe", "fireplace", "radiator", "door", "window"]
+rare = ["sofa", "bed", "tv", "dining table", "desk", "bookshelf", "shelf", "cabinet", "dresser", "armchair", "piano", "microwave"]
+often = ["chair", "office chair", "stool", "potted plant", "plant", "lamp", "bin", "bench", "fan", "vase", "basket", "suitcase",
+         "backpack", "handbag", "umbrella", "bicycle"]
+ignore = ["person", "dog", "cat", "cup", "bottle", "wine glass", "bowl", "cell phone", "book", "remote", "teddy bear", "picture",
+          "poster", "mirror", "clothes", "curtain", "not a landmark"]
 # the detector class a tag label answers to (tags with no class still go in house.json, for goals like "go to the sofa")
 tag_cls = { fridge = "refrigerator", oven = "oven", stove = "oven", sink = "sink", sofa = "couch", bed = "bed", tv = "tv", table = "dining table", toilet = "toilet", plant = "potted plant" }
 
 [curate]
-# a small model checks the landmark list (keep / name / merge / how often it moves); empty model = config lists only
-model = "global.anthropic.claude-haiku-5-5"
+# who checks the landmark list (what each candidate really is, keep or drop, how often it moves):
+#   rules  = the lists above only        opencv = ImageNet classifier on each crop (cv.dnn, offline)
+#   clip   = open-vocabulary CLIP (cv.dnn, offline)   gemini = Gemini API (GEMINI_API_KEY)   haiku = Claude Haiku (Bedrock)
+#   hybrid = clip, and Gemini only for the crops clip is unsure about (clip alone when there is no key)
+backend = "hybrid"
+model = "global.anthropic.claude-haiku-5-5"   # haiku backend
 region = "us-east-1"
+gemini_model = "gemini-flash-latest"
 max_images = 24
+sure = 0.5            # a local classifier at least this confident decides alone (hybrid asks Gemini below it)
+# CLIP also scores these, so it can say a crop shows no real object
+clip_negatives = { "a blurry photo" = "not a landmark", "a reflection in a glass window" = "not a landmark", "a poster or picture on a wall" = "picture", "an empty wall" = "not a landmark", "the floor" = "not a landmark", "a person" = "person" }
