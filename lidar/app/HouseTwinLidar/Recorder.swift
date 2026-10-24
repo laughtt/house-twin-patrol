@@ -41,6 +41,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     @Published var sectors: [String: Set<Int>] = [:]
     @Published var facing: Int?
     @Published var lowFast = false
+    @Published var lowTilted = false
     @Published var tags: [Tag] = []
     let veil = AnchorEntity(.camera)
     private(set) var dir: URL!
@@ -288,7 +289,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         let f = SIMD2(-T.columns.2.x, -T.columns.2.z)  // heading on the floor plane (the camera looks along -z)
         let k = simd_length(f) > 0.5 ? Int((Double(atan2(f.y, f.x)) / (.pi / 4) + 8).rounded(.down)) % 8 : nil
         if k != facing { facing = k }
-        guard recording else { hold = 0; lowFast = false; return }
+        guard recording else { hold = 0; lowFast = false; lowTilted = false; return }
         if speed < 0.05 && rot < 10 {
             let s = stillSince ?? r.t
             stillSince = s
@@ -298,8 +299,10 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         } else { stillSince = nil; hold = 0 }
         if h.map({ $0 >= 0.9 }) ?? true { walls[room, default: 0] += min(dt, 0.5) }
         let low = h.map { $0 < 0.6 } ?? false, calm = rot < 30 && speed < 0.15
-        if low && !calm != lowFast { lowFast = low && !calm }
-        if low, calm, let k {
+        let level = abs(asin(Double(-T.columns.2.y))) < 25 * .pi / 180  // the duck looks straight ahead, not at the floor
+        if low && !level != lowTilted { lowTilted = low && !level }
+        if low && level && !calm != lowFast { lowFast = low && level && !calm }
+        if low, level, calm, let k {
             if k != lowSector { lowSector = k; lowSince = r.t }
             else if now - lowSince >= 1, sectors[room]?.contains(k) != true { sectors[room, default: []].insert(k) }
         } else { lowSector = nil }

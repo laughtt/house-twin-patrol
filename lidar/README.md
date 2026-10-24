@@ -30,7 +30,7 @@ so every zone needs a chest-height sweep, a slow duck-height turn and a few tagg
 3. **Walls**: walk slowly (about half a normal pace), the phone at chest height and tilted a little down so the floor shows,
    and sweep every wall (25 s per zone at ≥ 0.9 m). When you go through a doorway, tap **Doorway**, then tap the new
    room's zone just after you step in.
-4. **Low pass**: go down to duck height (phone below your knee, under 60 cm) and turn slowly all the way round, holding still
+4. **Low pass**: go down to duck height (phone below your knee, under 60 cm, camera level (not at the floor)) and turn slowly all the way round, holding still
    about a second in each direction. The 8-segment ring fills one 45° sector per direction (yellow = where you face now).
    The cyan banner says "Now go low" when the walls are done and "Slower" when you move too fast down there.
 5. **Hold**: the crosshair's ring fills when the phone is still (1.5 s, then a light tick). Hold still on things you want sharp.

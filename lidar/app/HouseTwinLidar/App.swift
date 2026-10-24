@@ -127,6 +127,7 @@ struct ContentView: View {
 
     var nudge: String? {
         guard rec.recording else { return nil }
+        if rec.lowTilted { return "Camera straight ahead, not at the floor — like the duck's eyes" }
         if rec.lowFast { return "Slower — hold still a second in each direction" }
         if rec.walls[rec.room, default: 0] >= 25 && rec.sectors[rec.room, default: []].count < 4 { return "Now go low ⬇︎ duck height" }
         return nil
@@ -136,7 +137,7 @@ struct ContentView: View {
         let walls = rec.walls[rec.room, default: 0], low = rec.sectors[rec.room, default: []]
         let tags = rec.tags.filter { $0.room == rec.room }.count
         let tip = walls < 25 ? "Sweep every wall at chest height"
-            : low.count < 8 ? "Go down to duck height: phone below your knee (under 60 cm), turn slowly all the way round"
+            : low.count < 8 ? "Go down to duck height: phone below your knee (under 60 cm), camera level, turn slowly all the way round"
             : tags < 3 ? "Aim the crosshair at big things that never move (fridge, oven, sofa, bed, toilet, TV) and tap Tag"
             : "\(rec.room) done: next zone"
         return VStack(alignment: .leading, spacing: 4) {
