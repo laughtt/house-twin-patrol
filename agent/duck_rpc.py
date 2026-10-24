@@ -39,6 +39,10 @@ class Duck:
         self._robot.sendall((json.dumps({"jsonrpc": "2.0", "method": "robot.move",
                                          "params": {"vx": vx, "vy": 0.0, "vyaw": vyaw}}) + "\n").encode())
 
+    def enable(self, on=True):
+        """Torque on: the standing policy gets the duck up (off: it sits)."""
+        self._robot.sendall((json.dumps({"jsonrpc": "2.0", "id": 2, "method": "robot.enable", "params": {"on": on}}) + "\n").encode())
+
     def frame(self):
         """One camera frame, turned upright (BGR), and mediad's header."""
         s = socket.socket(socket.AF_UNIX)

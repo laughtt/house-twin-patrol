@@ -12,6 +12,7 @@ import argparse
 import json
 import math
 import sys
+import time
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 
@@ -68,11 +69,13 @@ def episode(args):
     t, trace, results, bumps = 0.0, [], [], 0
     found = None  # first moment it was sure and right
     back = 0  # steps left of backing off after a bump
+    think, plans = 0.0, 0  # the brain's own compute (not the twin's), and how many routes it planned
     for g in todo:
         t0, path, last_plan, goal_bumps = t, None, -9.0, 0
         while t - t0 < GOAL_S and goal_bumps < 12:  # a patrol gives up on a spot it can't reach and moves on
             dist, status = sim.tof(*true)
             objs = sim.objects(*true)
+            tick = time.perf_counter()
             pf.update_tof(dist, status)
             pf.update_landmarks(objs, sim.hfov)
             est, conf = pf.estimate(), pf.confidence()
@@ -91,6 +94,7 @@ def episode(args):
                     break
                 if path is None or t - last_plan > 2.0:  # a narrow door: squeeze through with a smaller margin
                     path, last_plan = route(hmap, est[:2], g["xy"], MARGIN) or route(hmap, est[:2], g["xy"], SQUEEZE), t
+                    plans += 1
                 mode = "go" if path else "stuck"
                 if path:  # steer at the next corner of the route until 12 cm from it (aiming past a corner cuts it)
                     ahead = next((p for p in path if math.hypot(p[0] - est[0], p[1] - est[1]) > 0.12), path[-1])
@@ -99,11 +103,14 @@ def episode(args):
                     v = VX * max(0.0, math.cos(e)) ** 3  # slow down in turns instead of cutting the corner
                     if sim.clearance[int((est[1] - hmap.o[1]) / 0.02) + 1, int((est[0] - hmap.o[0]) / 0.02) + 1] < MARGIN + 0.02:
                         v = min(v, 0.08)  # tight spot (a door): creep
+            think += time.perf_counter() - tick
             true, odo, bumped = sim.move(true, v, w, 1 / HZ)
             bumps += bumped
             if bumped and v > 0:
                 back, last_plan, goal_bumps = 3, -9.0, goal_bumps + 1  # back off 6 cm and plan again
+            tick = time.perf_counter()
             pf.predict(*odo)
+            think += time.perf_counter() - tick
             trace.append({"t": round(t, 1), "true": [round(true[0], 3), round(true[1], 3), round(true[2], 3)],
                           "est": [round(est[0], 3), round(est[1], 3), round(est[2], 3)], "conf": round(conf, 2), "mode": mode,
                           "aim": [round(ahead[0], 2), round(ahead[1], 2)] if ahead else None,
@@ -117,6 +124,7 @@ def episode(args):
                "declared": sum(r["declared"] for r in results),
                "reached": sum(r["declared"] and r["true_dist"] < 0.5 for r in results),
                "found_s": round(found, 1) if found is not None else None, "time_s": round(t, 1), "bumps": bumps,
+               "think_ms_per_step": round(1000 * think / max(1, round(t * HZ)), 2), "plans": plans,
                "room_right_pct": round(100 * np.mean([s["room_said"] == s["room_true"] for s in sure]), 1) if sure else None,
                "err_when_sure_median_m": round(float(np.median([math.hypot(s["est"][0] - s["true"][0], s["est"][1] - s["true"][1]) for s in sure])), 3) if sure else None,
                "results": results}

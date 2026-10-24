@@ -106,6 +106,7 @@ def main(argv=None):
     ap = argparse.ArgumentParser(prog="twin sim")
     ap.add_argument("house", nargs="?", default=str(ROOT / "out/current/house.json"))
     ap.add_argument("--spawn", default="", help="x,y,heading the duck faces in radians (default: centre of the first zone)")
+    ap.add_argument("--no-markers", action="store_true", help="zero stickers: leave the scanned markers out")
     a = ap.parse_args(argv)
     house_path = Path(a.house).resolve()
     here = house_path.parent
@@ -125,7 +126,7 @@ def main(argv=None):
     if current.is_symlink() or not current.exists():
         current.unlink(missing_ok=True)
         current.symlink_to(here)
-    xml, W, L = house_xml(h, frame)
+    xml, W, L = house_xml({**h, "markers": []} if a.no_markers else h, frame)
     (ROBOT / "myhouse.xml").write_text(xml)
     scene = (ROBOT / "scene_apartment.xml").read_text().replace("apartment.xml", "myhouse.xml")
     scene = scene.replace('<global azimuth="160" elevation="-20" />', '<global azimuth="160" elevation="-20" offwidth="1280" offheight="720"/>')

@@ -41,7 +41,8 @@ if __name__ == "__main__":
         rows.append({"house": name(h), "goals": E[0]["goals"], "reached": f'{sum(e["reached"] for e in E)}/{sum(e["goals"] for e in E)}',
                      "found_s": round(float(np.median(found)), 1) if found else None, "found_all": f"{len(found)}/{len(E)}",
                      "err_cm": round(100 * float(np.median(sure)), 1) if sure else None,
-                     "room_right_pct": round(float(np.median(rooms)), 1) if rooms else None, "bumps": sum(e["bumps"] for e in E)})
-    (ROOT / "out/mission/all.json").write_text(json.dumps(rows, indent=1))
+                     "room_right_pct": round(float(np.median(rooms)), 1) if rooms else None, "bumps": sum(e["bumps"] for e in E),
+                     "think_ms": round(float(np.mean([e["think_ms_per_step"] for e in E])), 2), "plans": sum(e["plans"] for e in E)})
+    (ROOT / "out/mission" / (sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else "all.json")).write_text(json.dumps(rows, indent=1))
     for r in rows:
         print(json.dumps(r))
