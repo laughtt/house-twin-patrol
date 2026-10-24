@@ -1,0 +1,25 @@
+{
+	servers {
+		timeouts {
+			read_header 10s
+			idle 2m
+		}
+	}
+}
+
+game.adtomic.co {
+	# Ubuntu's Caddy 2.6 falls back to ZeroSSL, whose legacy sign-up no longer works.
+	tls {
+		issuer acme
+	}
+	request_body {
+		max_size 300MB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy no-referrer
+		Permissions-Policy "camera=(self), microphone=(), geolocation=()"
+	}
+	reverse_proxy 127.0.0.1:8790
+}

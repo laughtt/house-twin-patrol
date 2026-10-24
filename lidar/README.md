@@ -1,0 +1,83 @@
+# LiDAR capture → house.json
+
+`app/` is an iPhone app that records RGB, LiDAR depth and the ARKit pose while you walk through the house.
+`pipeline/build_house.py` turns one recording into `house.json` (PLAN §6.3), `top.png`, `cloud.ply` and `report.json`.
+
+## Install the app (once, about 10 min)
+Needs an iPhone with LiDAR (12 Pro or newer Pro model) and a free Apple ID. Other phones show a "no LiDAR" message.
+
+1. On the Mac, open `house-twin-patrol/lidar/app/HouseTwinLidar.xcodeproj` in Xcode.
+2. Click the blue **HouseTwinLidar** project → target **HouseTwinLidar** → **Signing & Capabilities**:
+   tick *Automatically manage signing*, set **Team** to your Apple ID (Personal Team; add it under Xcode → Settings → Accounts if needed).
+   `project.yml` sets Mauricio's team and `io.housetwinpatrol.lidar.mc`; on another Apple ID pick your team and a unique
+   bundle id such as `io.<yourname>.lidar`.
+3. Plug the iPhone in with a cable, unlock it and tap **Trust** this computer.
+4. On the iPhone: Settings → Privacy & Security → **Developer Mode** → on → restart → confirm. (The switch appears after step 3.)
+5. In Xcode's top bar pick your iPhone as the run destination and press **Run** (▶).
+6. The first launch fails with "untrusted developer": on the iPhone go to Settings → General → **VPN & Device Management** →
+   your Apple ID → **Trust**. Open *Twin LiDAR* again and allow the camera.
+
+Free (personal team) apps stop opening after 7 days: plug in and press Run again.
+
+## Record
+1. Gear icon → paste your phone link `https://game.adtomic.co/?k=…` (the app keeps only the key) and edit the zone list if you like.
+2. Good light, doors open. Tap the zone you start in, then **Start**.
+3. Walk slowly (about half a normal pace), the phone at chest height and tilted a little down so the floor shows.
+   In each room, turn so the camera sweeps every wall. When you go through a doorway, tap **Doorway**, then tap the new room's zone
+   just after you step in.
+4. If the orange "Tracking limited" banner shows, slow down or point at a textured area until it goes away.
+   The view starts dark and lights up where the LiDAR mesh has covered a surface (up to 5 m away): sweep until the
+   walls and floor are bright. "Scanned: N m²" grows while you capture new surfaces; "Nothing new here" means move on.
+   The veil can be turned off in Settings; it is feedback only and not saved.
+5. **Stop** after 2–3 minutes (keep it under 250 MB; the counter shows the size).
+6. The review screen opens: drag on the colour strip or tap a thumbnail to find a moment. Tapping a zone relabels
+   *from there to the next change* (moves a boundary earlier or adds a zone you forgot); with **Select range from here**
+   it relabels just the selected range (moves a boundary later). **Save** (or **Skip**) packs the zip.
+7. **Share / AirDrop** to the Mac, or **Upload** (sends it to `/upload?session=<id>&room=lidar&ext=zip`).
+   The folder icon lists earlier recordings (they survive app updates): tap one to fix its zones, share or upload it again;
+   swipe to delete. They also show in the Files app under *On My iPhone → Twin LiDAR*.
+
+## Build the house
+```
+cd house-twin-patrol
+uv run --python 3.12 --with opencv-python-headless==5.0.0.93 python lidar/pipeline/build_house.py ~/Downloads/lidar-20261024-101500.zip
+```
+Output: `out/lidar/<session>/house.json, top.png, cloud.ply, report.json`. Test without a phone:
+`uv run --python 3.12 --with opencv-python-headless==5.0.0.93 python eval/synth_lidar.py`.
+
+## Export format (`<session>.zip` → `<session>/…`)
+| file | content |
+|---|---|
+| `session.json` | session id, device, fps and a short note on each format |
+| `frames.jsonl` | one JSON line per frame (below), about 4 per second |
+| `rgb/NNNNNN.jpg` | 960×720 JPEG (q 0.6) in the **sensor's landscape orientation** (not rotated for portrait) |
+| `depth/NNNNNN.bin` | 256×192 Float16 little-endian, metres along the camera's viewing axis (z-depth), row-major |
+| `conf/NNNNNN.bin` | 256×192 UInt8 ARKit confidence: 0 low, 1 medium, 2 high |
+| `events.jsonl` | taps: `{"t","i","event":"room"\|"doorway","room","T"}` (`i` = next frame index) |
+| `labels.json` | only if zones were fixed after recording: `{"ranges": [{"from": i, "to": i, "room": "Kitchen"}, …]}` (inclusive frame `i`). The app also rewrites `room` in `frames.jsonl`; `build_house.py` lets `labels.json` win |
+
+Frame line:
+```json
+{"i": 12, "t": 3.01, "rgb": "rgb/000012.jpg", "depth": "depth/000012.bin", "conf": "conf/000012.bin",
+ "rgb_wh": [960, 720], "K": [fx, fy, cx, cy], "depth_wh": [256, 192], "K_depth": [fx, fy, cx, cy],
+ "T": [16 numbers, row-major 4×4], "tracking": "normal" | "limited:<reason>" | "notAvailable", "room": "Kitchen"}
+```
+- `K` is for the saved JPEG and `K_depth` for the depth map (ARKit's intrinsics scaled from the 1920×1440 capture).
+- `T` is ARKit's camera-to-world transform. ARKit world: metres, **y up** (gravity), origin where the session started.
+  ARKit camera: x right, y up, z backwards (it looks along −z). For OpenCV (x right, y down, z forward) use
+  `T_cv = T @ diag(1, -1, -1, 1)`. The pipeline then maps the world to z up: `(x, y, z) = (x_ar, -z_ar, y_ar)`.
+
+## How the pipeline works
+1. Keep tracking-normal frames and high-confidence depth up to 5 m.
+2. Fuse every frame into an OpenCV 5 `cv.Volume` (HashTSDF, 2.5 cm voxels). Back-project with `cv.depthTo3d`
+   and get per-pixel normals with `cv.RgbdNormals`, then put the points in a 2.5 cm voxel grid with the mean position,
+   normal, colour and the majority room label of the frames that saw each voxel.
+3. Floor = the lowest dense layer of upward-facing voxels (ARKit is gravity-aligned, so heights are direct).
+   Manhattan angle = the 4θ circular mean of wall normals.
+4. Each room = a rectangle: per side, the farthest dense band of wall voxels that face into the room (its label, 0.3–2.0 m high).
+   Facing walls of two rooms less than 40 cm apart become one shared wall, as thick as the gap.
+5. Doors: where the walk crosses a wall line near a room-label change. The width is the empty gap in that wall's points.
+6. Objects: YOLOX (`service/v0/scan.py: detect`) on every 2nd frame, after rotating it upright using gravity. Each box
+   is lifted to 3D with the depth: floor and room-wall points are dropped and the biggest connected piece on a 4 cm
+   top-down grid is kept. Pieces of one class that touch merge across frames into an oriented box (`cv.minAreaRect`, height = top).
+7. Origin = the largest room's corner, x along its wall. `cloud.ply` = the TSDF surface raycast from every 8th pose.

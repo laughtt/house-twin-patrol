@@ -1,0 +1,27 @@
+name: HouseTwinLidar
+options:
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  HouseTwinLidar:
+    type: application
+    platform: iOS
+    sources: [HouseTwinLidar]
+    info:
+      path: HouseTwinLidar/Info.plist
+      properties:
+        CFBundleDisplayName: Twin LiDAR
+        NSCameraUsageDescription: The camera and LiDAR measure your home to build its floor plan.
+        UIRequiredDeviceCapabilities: [arkit]
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        UILaunchScreen: {}
+        UIRequiresFullScreen: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.housetwinpatrol.lidar.mc
+        DEVELOPMENT_TEAM: 6WBE55AEH4
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic

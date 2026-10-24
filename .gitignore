@@ -1,0 +1,11 @@
+# private home data, generated output, downloaded weights, build products
+data/
+out/
+service/uploads/
+service/models/
+lidar/app/build/
+*.onnx
+*.zip
+__pycache__/
+.DS_Store
+xcuserdata/

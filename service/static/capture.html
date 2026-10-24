@@ -1,0 +1,245 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>House Twin Capture</title>
+<style>
+:root{--bg:#f6f5f1;--fg:#1c1b19;--muted:#6b6862;--card:#fff;--line:#e2dfd8;--accent:#1f6feb;--ok:#1a7f37;--warn:#b35900;--bad:#c62828}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121211;--fg:#eceae4;--muted:#9a978f;--card:#1d1c1a;--line:#33312d;--accent:#3b82f6;--ok:#2ea043;--warn:#d9822b;--bad:#e5484d}}
+:root[data-theme="dark"]{--bg:#121211;--fg:#eceae4;--muted:#9a978f;--card:#1d1c1a;--line:#33312d;--accent:#3b82f6;--ok:#2ea043;--warn:#d9822b;--bad:#e5484d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,sans-serif}
+main{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:.1em 0 .3em}
+.step{color:var(--muted);font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;min-height:1em}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}
+ol,ul{padding-left:1.2em;margin:.4em 0}
+li{margin:.25em 0}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:14px 16px;width:100%;margin-top:10px;background:var(--accent);color:#fff}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
+button.stop{background:var(--bad)}
+button:disabled{opacity:.35}
+.cam{position:relative;border-radius:12px;overflow:hidden;background:#000;margin:12px 0}
+.cam video{display:block;width:100%}
+.cam canvas{position:absolute;inset:0;width:100%;height:100%}
+.rec{position:absolute;top:10px;left:10px;background:var(--bad);color:#fff;padding:4px 10px;border-radius:99px;font-weight:700}
+.chips{display:flex;flex-wrap:wrap;gap:8px}
+.chip{padding:6px 12px;border-radius:99px;border:1px solid var(--line);font-weight:600}
+.chip.ok{background:var(--ok);border-color:var(--ok);color:#fff}
+.banner{background:var(--warn);color:#fff;padding:8px 12px;border-radius:8px;font-weight:600;margin:8px 0}
+.big{font-size:1.15rem;font-weight:600}
+.row{display:flex;gap:8px;margin:6px 0}
+.row input{font:inherit;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);min-width:0;flex:1}
+.row input:first-child{flex:2}
+progress{width:100%;height:14px}
+.muted{color:var(--muted);font-size:.9rem}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<main>
+  <div class="step" id="step"></div>
+  <h1 id="title">House Twin · Capture</h1>
+  <div class="banner" id="turn" hidden>Turn your phone sideways (landscape)</div>
+  <div id="panel"></div>
+  <div class="cam" id="cam" hidden>
+    <video id="video" playsinline muted autoplay></video>
+    <canvas id="overlay"></canvas>
+    <div class="rec" id="rec" hidden></div>
+  </div>
+  <div class="chips" id="chips"></div>
+  <div id="actions"></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const video = $('video'), overlay = $('overlay'), ctx = overlay.getContext('2d'), grab = document.createElement('canvas');
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d } catch { return d } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} },
+};
+const urlKey = new URLSearchParams(location.search).get('k');
+if (urlKey) { store.set('key', urlKey); history.replaceState(null, '', location.pathname); }
+const KEY = urlKey || store.get('key', '');
+let rooms = store.get('rooms', [{name: 'Kitchen', ids: [0, 1]}, {name: 'Living room', ids: [3, 4, 5]}, {name: 'Bedroom', ids: [6, 7]}]);
+let stream, session, mime, ext, current = null, seen = {}, recBtn, live = false;
+const saved = {};
+
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;'}[c]));
+const slug = s => s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'room';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const btn = (text, onclick, cls = '') => Object.assign(document.createElement('button'), {textContent: text, onclick, className: cls});
+
+function show({step, title, html = '', cam = false, actions = []}) {
+  if (step != null) $('step').textContent = step;
+  $('title').textContent = title;
+  $('panel').innerHTML = html;
+  $('cam').hidden = !cam;
+  $('chips').innerHTML = '';
+  $('actions').replaceChildren(...actions);
+}
+
+function setup() {
+  show({title: 'House Twin · Capture', html: `
+    <div class="card"><b>What you'll do (about 10 min)</b><ol>
+      <li><b>Lens check:</b> film the printed checkerboard for 20 s.</li>
+      <li><b>In each room:</b> point at its markers until they turn green.</li>
+      <li><b>Film the whole room:</b> first a slow turn on the spot in the middle, then walk round at chest height, then at knee height.</li></ol>
+      <p class="muted">Hold the phone sideways. Walk slowly. Keep people and screens out of the shot.</p></div>
+    <div class="card"><b>Rooms and their marker numbers</b>
+      <div id="rooms">${rooms.map(r => `<div class="row"><input value="${esc(r.name)}" aria-label="Room name"><input value="${r.ids.join(', ')}" inputmode="numeric" aria-label="Marker numbers"></div>`).join('')}
+      <div class="row"><input placeholder="Another room (optional)" aria-label="Room name"><input placeholder="9" inputmode="numeric" aria-label="Marker numbers"></div></div>
+      <p class="muted">Match these to the markers you stuck up. Leave a name empty to skip that row.</p></div>
+    ${KEY ? '' : '<p class="banner">Missing access key: open the full link you were given (it ends in ?k=…).</p>'}`,
+    actions: [btn('Start', start)]});
+  $('actions').firstChild.disabled = !KEY;
+}
+
+async function start() {
+  rooms = [...$('rooms').children].map(row => {
+    const [n, i] = row.querySelectorAll('input');
+    return {name: n.value.trim(), ids: i.value.split(/\D+/).filter(Boolean).map(Number)};
+  }).filter(r => r.name);
+  store.set('rooms', rooms);
+  session = new Date().toISOString().slice(0, 16).replace(/\D/g, '') + '-' + Math.random().toString(36).slice(2, 6);
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({audio: false,
+      video: {facingMode: {ideal: 'environment'}, width: {ideal: 1920}, height: {ideal: 1080}, frameRate: {ideal: 30}}});
+  } catch (e) {
+    return alert(`Camera blocked (${e.name}). Allow camera access for this site, then press Start again.`);
+  }
+  video.srcObject = stream;
+  await video.play().catch(() => {});
+  mime = ['video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m));
+  ext = mime.startsWith('video/mp4') ? 'mp4' : 'webm';
+  try { await navigator.wakeLock.request('screen') } catch {}
+  live = true;
+  detectLoop();
+  calib();
+}
+
+// One frame in flight: wait for the reply, then grab the newest frame.
+async function detectLoop() {
+  while (live) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw) { await sleep(200); continue; }
+    $('turn').hidden = vw >= vh;
+    const s = 640 / Math.max(vw, vh), w = Math.round(vw * s), h = Math.round(vh * s);
+    if (grab.width !== w || grab.height !== h) { grab.width = overlay.width = w; grab.height = overlay.height = h; }
+    grab.getContext('2d').drawImage(video, 0, 0, w, h);
+    const fd = new FormData();
+    fd.append('frame', await new Promise(r => grab.toBlob(r, 'image/jpeg', 0.8)), 'f.jpg');
+    try {
+      const r = await fetch('/perceive', {method: 'POST', headers: {'X-API-Key': KEY}, body: fd});
+      if (r.ok) draw((await r.json()).markers);
+    } catch {}
+    await sleep(120);
+  }
+}
+
+function draw(markers) {
+  ctx.clearRect(0, 0, overlay.width, overlay.height);
+  ctx.lineWidth = 4;
+  ctx.font = 'bold 18px system-ui';
+  for (const m of markers) {
+    const wanted = current?.ids.includes(m.id);
+    ctx.strokeStyle = ctx.fillStyle = wanted || !current ? '#2ea043' : '#d9822b';
+    ctx.beginPath();
+    m.corners.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+    ctx.closePath();
+    ctx.stroke();
+    ctx.fillText(`#${m.id} · ${m.dist_m} m`, m.corners[0][0], m.corners[0][1] - 8);
+    if (wanted && seen[m.id] == null) { seen[m.id] = m.dist_m; chips(); }
+  }
+}
+
+function chips() {
+  if (!current) return;
+  $('chips').innerHTML = current.ids.map(id => `<span class="chip ${seen[id] != null ? 'ok' : ''}">${seen[id] != null ? '✓ ' : ''}Marker ${id}</span>`).join('');
+  if (recBtn) recBtn.disabled = !current.ids.every(id => seen[id] != null);
+}
+
+function calib() {
+  current = null;
+  show({step: `Step 1 of ${rooms.length + 1}`, title: 'Lens check', cam: true, html: `
+    <div class="card"><ol>
+      <li>Lay the printed checkerboard flat on a table, in good light.</li>
+      <li>Press <b>Record</b>. Slowly move the phone around it: from above, from each side, tilted, near and far.</li>
+      <li>Keep the whole board in view. It stops by itself after 20 s.</li></ol></div>`,
+    actions: [btn('Record 20 s', () => record('calib', 'Lens check', 20, 20, calib, () => room(0))),
+              btn('Skip (no checkerboard)', () => room(0), 'ghost')]});
+}
+
+function room(i) {
+  if (i >= rooms.length) return finish();
+  current = rooms[i];
+  seen = {};
+  const go = () => record(slug(current.name), current.name, 80, 150, () => room(i), () => room(i + 1), roomTip);
+  recBtn = btn('Start recording', go);
+  show({step: `Step ${i + 2} of ${rooms.length + 1}`, title: current.name, cam: true, html: `
+    <div class="card"><ol>
+      <li>Go to the <b>${esc(current.name)}</b>.</li>
+      <li>Point the camera at each marker from 1–2 m away until it turns green.</li>
+      <li>Then press <b>Start recording</b>.</li></ol></div>`,
+    actions: [recBtn, btn('Record anyway (a marker won’t turn green)', go, 'ghost')]});
+  chips();
+}
+
+const roomTip = t => t < 22
+  ? '🔄 Stand in the <b>middle</b>. Aim a little <b>down</b> so the floor shows. Keep the phone close to your face and <b>turn slowly on the spot</b>, one full circle.'
+  : t < 50 ? '🚶 Now walk slowly around the whole room at <b>chest height</b>. Show every wall, corner, piece of furniture and marker.'
+  : t < 80 ? '🦆 Now crouch to <b>knee height</b> (the duck’s eye view) and go around again.'
+  : '✅ Good. Press <b>Stop</b> once you’ve covered the room.';
+
+function record(key, label, target, max, redo, next, tip) {
+  const chunks = [], rec = new MediaRecorder(stream, {mimeType: mime, videoBitsPerSecond: 8e6});
+  let t = 0;
+  rec.ondataavailable = e => e.data.size && chunks.push(e.data);
+  rec.onstop = () => { clearInterval(timer); $('rec').hidden = true; upload(key, label, new Blob(chunks, {type: mime}), redo, next); };
+  const status = () => {
+    $('rec').textContent = `● ${t}s / ${target}s`;
+    if (tip) $('panel').innerHTML = `<div class="card big">${tip(t)}</div>`;
+  };
+  const timer = setInterval(() => { t++; status(); if (t >= max) rec.stop(); }, 1000);
+  $('actions').replaceChildren(btn('Stop', () => rec.state === 'recording' && rec.stop(), 'stop'));
+  $('rec').hidden = false;
+  status();
+  rec.start(1000);
+}
+
+function upload(key, label, blob, redo, next) {
+  const mb = (blob.size / 1e6).toFixed(1);
+  show({title: `Uploading ${label}…`, html: `<div class="card"><progress id="prog" max="1" value="0"></progress><p class="muted">${mb} MB · keep this page open.</p></div>`});
+  const x = new XMLHttpRequest();
+  x.open('POST', `/upload?session=${session}&room=${key}&ext=${ext}&seen=${Object.keys(seen).join(',')}`);
+  x.setRequestHeader('X-API-Key', KEY);
+  x.upload.onprogress = e => $('prog').value = e.loaded / e.total;
+  x.onload = () => x.status === 200 ? done() : failed();
+  x.onerror = failed;
+  x.send(blob);
+  function done() {
+    saved[key] = `${label} · ${mb} MB`;
+    show({title: `✓ ${label} saved`, html: `<div class="card big">${esc(label)} uploaded (${mb} MB).</div>`,
+      actions: [btn('Next', next), btn('Record again', redo, 'ghost')]});
+  }
+  function failed() {
+    show({title: 'Upload failed', html: `<div class="card">Check your connection (error ${x.status || 'network'}). The video is still on this page.</div>`,
+      actions: [btn('Retry upload', () => upload(key, label, blob, redo, next)), btn('Record again', redo, 'ghost')]});
+  }
+}
+
+function finish() {
+  live = false;
+  current = null;
+  stream.getTracks().forEach(t => t.stop());
+  show({step: 'Done', title: 'All rooms filmed 🎉', html: `
+    <div class="card"><ul>${Object.values(saved).map(s => `<li>✓ ${esc(s)}</li>`).join('')}</ul>
+      <p class="muted">Session <b>${session}</b>. Next: the server turns these videos into a floor plan.</p></div>`,
+    actions: [btn('Measure the rooms without markers (v0)', () => location.href = `/v0?s=${session}`),
+      btn('Start a new capture', () => location.reload(), 'ghost')]});
+}
+
+setup();
+</script>
+</body>
+</html>

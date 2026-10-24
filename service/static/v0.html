@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Room Measure v0</title>
+<style>
+:root{--bg:#f6f5f1;--fg:#1c1b19;--muted:#6b6862;--card:#fff;--line:#e2dfd8;--accent:#1f6feb;--ok:#1a7f37;--warn:#b35900;--bad:#c62828}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121211;--fg:#eceae4;--muted:#9a978f;--card:#1d1c1a;--line:#33312d;--accent:#3b82f6;--ok:#2ea043;--warn:#d9822b;--bad:#e5484d}}
+:root[data-theme="dark"]{--bg:#121211;--fg:#eceae4;--muted:#9a978f;--card:#1d1c1a;--line:#33312d;--accent:#3b82f6;--ok:#2ea043;--warn:#d9822b;--bad:#e5484d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,sans-serif}
+main{max-width:720px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:8px 0 4px}
+h2{font-size:1.15rem;margin:0 0 6px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}
+.big{font-size:1.9rem;font-weight:700;margin:4px 0}
+.muted{color:var(--muted);font-size:.9rem}
+.row{display:flex;gap:8px;align-items:center;margin:8px 0}
+input{font:inherit;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);min-width:0;flex:1}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:11px 14px;background:var(--accent);color:#fff}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertical-align:top}
+.imgs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.imgs img{height:120px;border-radius:6px;border:1px solid var(--line)}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.tbl{overflow-x:auto}
+ul{margin:6px 0;padding-left:20px}
+</style>
+</head>
+<body>
+<main>
+<h1>Room size without markers (v0)</h1>
+<p class="muted">One phone video per room → OpenCV 5 (lens, depth, floor, walls, objects) → an AI agent picks objects of standard height → maths turns it into metres. Compare it with your tape later.</p>
+<div class="card row"><input id="sid" placeholder="Session id" aria-label="Session id"><button onclick="load()">Open</button></div>
+<div id="out"></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const store = {get: k => { try { return JSON.parse(localStorage.getItem(k)) } catch { return null } },
+               set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }};
+const q = new URLSearchParams(location.search);
+if (q.get('k')) store.set('key', q.get('k'));
+const KEY = q.get('k') || store.get('key') || '';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
+const api = (path, opts = {}) => fetch(path, {...opts, headers: {'X-API-Key': KEY}}).then(async r => r.ok ? r : Promise.reject(new Error((await r.json().catch(() => ({}))).detail || r.status)));
+let session = q.get('s') || store.get('v0session') || '', timer;
+$('sid').value = session;
+
+async function load() {
+  session = $('sid').value.trim();
+  store.set('v0session', session);
+  clearTimeout(timer);
+  if (!KEY) return $('out').innerHTML = '<div class="card bad">Missing access key: open the full link once (it ends in ?k=…).</div>';
+  try {
+    const data = await (await api(`/v0/session?session=${encodeURIComponent(session)}`)).json();
+    $('out').innerHTML = data.rooms.length ? data.rooms.map(card).join('') : '<div class="card">No room videos in this session yet.</div>';
+    data.rooms.forEach(r => r.result && r.result.status !== 'running' && r.result.status !== 'error' && images(r.room, r.result));
+    if (data.rooms.some(r => r.result?.status === 'running')) timer = setTimeout(load, 4000);
+  } catch (e) { $('out').innerHTML = `<div class="card bad">${esc(e.message)}</div>`; }
+}
+
+function card({room, file, result: r}) {
+  const run = label => `<button onclick="run('${room}')">${label}</button>`;
+  if (!r) return `<div class="card"><h2>${esc(room)}</h2><p class="muted">${esc(file)}</p>${run('Measure this room')}</div>`;
+  if (r.status === 'running') return `<div class="card"><h2>${esc(room)}</h2><p>⏳ Measuring… about 1–2 minutes.</p></div>`;
+  if (r.status === 'error') return `<div class="card"><h2>${esc(room)}</h2><p class="bad">${esc(r.error)}</p>${run('Try again')}</div>`;
+  const [w, l] = r.size_m, m = r.model;
+  const refs = Object.fromEntries(r.refs.map(f => [f.id, f]));
+  return `<div class="card"><h2>${esc(room)} <span class="muted">· ${esc(r.room_type)}</span></h2>
+    <div class="big">${w.toFixed(2)} × ${l.toFixed(2)} m <span class="${r.sigma_pct <= 5 ? 'ok' : r.sigma_pct <= 12 ? 'warn' : 'bad'}">± ${r.sigma_pct}%</span></div>
+    <p class="muted">Depth model alone: ${m.size_m[0]} × ${m.size_m[1]} m${m.size_pro_m ? ` · Depth Pro alone: ${m.size_pro_m[0]} × ${m.size_pro_m[1]} m (lens ${m.pro.hfov_deg}°)` : ''} · AI eyeball: ${r.eyeball_m.width} × ${r.eyeball_m.length} m</p>
+    ${r.questions.filter(x => refs[x.ref]).map(x => `<div class="card"><b>🦆 The agent asks:</b> ${esc(x.text)}
+      <div class="row"><input id="a-${room}-${x.ref}" inputmode="decimal" placeholder="cm" value="${r.answers[x.ref] ?? ''}">
+      <button onclick="answer('${room}','${x.ref}')">${r.answers[x.ref] ? 'Update' : 'Save'}</button></div></div>`).join('')}
+    <div class="imgs" id="imgs-${room}"></div>
+    <details><summary>How it got there</summary>
+      <div class="tbl"><table><tr><th>Reference</th><th>Our height</th><th>Typical</th><th>Implies ×</th><th>±</th><th></th></tr>
+      ${r.evidence.map(e => { const f = refs[e.id]; return `<tr><td>${esc(e.id)} ${esc(e.label)}</td>
+        <td>${f ? f.measured_m.toFixed(2) + ' m' : ''}</td><td>${f ? (r.answers[e.id] ? r.answers[e.id] / 100 : f.typical_m).toFixed(2) + ' m' : ''}</td>
+        <td>${e.scale.toFixed(2)}</td><td>${Math.round(e.sigma * 100)}%</td><td>${e.used ? '✓' : '<span class="bad">dropped</span>'}</td></tr>`; }).join('')}
+      </table></div>
+      <p class="muted">Lens ${m.hfov_deg}° · camera ${m.cam_height_m} m up · turned ${m.spin_deg}° · ${m.frames} frames · vision ${r.seconds.vision}s, agent ${r.seconds.agent}s (${esc(r.llm)})</p>
+      ${r.warnings.length ? `<ul>${r.warnings.map(x => `<li class="warn">${esc(x)}</li>`).join('')}</ul>` : ''}
+    </details>
+    <p>${run('Measure again')}</p></div>`;
+}
+
+async function images(room, r) {
+  const box = $(`imgs-${room}`);
+  for (const name of ['top.png', ...Array.from({length: r.images}, (_, i) => `img${i}.jpg`)]) {
+    try {
+      const img = new Image();
+      img.alt = name === 'top.png' ? 'Floor view' : 'Frame the agent saw';
+      img.src = URL.createObjectURL(await (await api(`/v0/file?session=${session}&room=${room}&name=${name}`)).blob());
+      box.append(img);
+    } catch {}
+  }
+}
+
+async function run(room) {
+  try { await api(`/v0/run?session=${session}&room=${room}`, {method: 'POST'}); load(); }
+  catch (e) { alert(e.message); }
+}
+
+async function answer(room, ref) {
+  const cm = parseFloat($(`a-${room}-${ref}`).value);
+  if (!(cm > 0)) return;
+  try { await api(`/v0/answer?session=${session}&room=${room}&ref=${ref}&cm=${cm}`, {method: 'POST'}); load(); }
+  catch (e) { alert(e.message); }
+}
+
+if (session) load();
+</script>
+</body>
+</html>

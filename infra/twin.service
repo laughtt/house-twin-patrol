@@ -1,0 +1,13 @@
+[Unit]
+Description=House Twin capture + perception service
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/srv/twin/service
+EnvironmentFile=/srv/twin/env
+ExecStart=/srv/twin/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8790
+Restart=always
+
+[Install]
+WantedBy=multi-user.target

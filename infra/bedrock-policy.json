@@ -1,0 +1,4 @@
+{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["bedrock:InvokeModel","bedrock:InvokeModelWithResponseStream"],
+ "Resource":["arn:aws:bedrock:*:888564397690:inference-profile/*anthropic.claude-*",
+             "arn:aws:bedrock:*::foundation-model/anthropic.claude-*",
+             "arn:aws:bedrock:::foundation-model/anthropic.claude-*"]}]}

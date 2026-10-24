@@ -1,0 +1,27 @@
+# House Twin Patrol settings. Paths may start with ~.
+
+[paths]
+out = "out"                                      # relative to house-twin-patrol/
+pollen_rl = "~/Pollen/microduck_rl"              # Pollen's simulator + robot model (duck-sim's DUCK_SIM_RL)
+
+[house]
+wall_h = 2.5          # simulation wall height when the scan does not give a ceiling
+open_plan_overlap = 0.3   # zones whose rectangles overlap this much (of the smaller) share one space, no wall between
+
+# The object detector speaks COCO. In a home some of its words need the room to make sense:
+# "rename" always applies; "only_in" keeps a label only in zones whose name contains one of the words, else uses "else"
+# (empty = drop it).
+[names.rename]
+couch = "sofa"
+refrigerator = "fridge"
+sink = "counter"
+oven = "counter"
+
+[names.only_in]
+toilet = { zones = ["bath", "toilet", "wc"], else = "" }
+bed = { zones = ["bed"], else = "sofa" }
+bench = { zones = ["hall", "entry", "garden"], else = "" }
+
+[markers]
+# printed sizes by id (metres): see capture/make_markers.py
+sizes = [{ ids = [0, 9], m = 0.15 }, { ids = [10, 29], m = 0.10 }, { ids = [30, 39], m = 0.20 }, { ids = [40, 40], m = 0.15 }]

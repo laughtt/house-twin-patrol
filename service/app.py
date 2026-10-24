@@ -1,0 +1,165 @@
+import json
+import os
+import re
+import secrets
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import cv2 as cv
+import numpy as np
+from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
+
+from v0.agent import estimate
+
+ROOT = Path(__file__).parent
+UPLOADS = Path(os.environ.get("UPLOAD_DIR", ROOT / "uploads"))
+API_KEY = os.environ["API_KEY"]
+MARKER_M = float(os.environ.get("MARKER_SIZE_M", "0.15"))
+HFOV_DEG = 66.0  # typical phone main lens; replaced by calib.yaml once the lens check is processed
+SAFE = re.compile(r"^[a-z0-9_-]{1,40}$")
+
+
+def corners_m(marker_id: int):
+    # the id tells the printed size: 10-29 filming/doorway 10 cm, 30-39 big far-wall 20 cm, rest 15 cm
+    size = 0.10 if 10 <= marker_id < 30 else 0.20 if 30 <= marker_id < 40 else MARKER_M
+    s = size / 2
+    return np.array([[-s, s, 0], [s, s, 0], [s, -s, 0], [-s, -s, 0]], np.float32)
+
+
+detector = cv.aruco.ArucoDetector(
+    cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_50), cv.aruco.DetectorParameters()
+)
+app = FastAPI()
+job = None  # one v0 measurement at a time (t4g.small has 1.8 GB)
+
+
+def check(key: str):
+    if not secrets.compare_digest(key, API_KEY):
+        raise HTTPException(401, "bad key")
+
+
+@app.get("/")
+def index():
+    return FileResponse(ROOT / "static/capture.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.post("/perceive")
+async def perceive(frame: UploadFile = File(...), x_api_key: str = Header("")):
+    check(x_api_key)
+    t0 = time.perf_counter()
+    img = cv.imdecode(np.frombuffer(await frame.read(), np.uint8), cv.IMREAD_GRAYSCALE)
+    t1 = time.perf_counter()
+    corners, ids, _ = detector.detectMarkers(img)
+    t2 = time.perf_counter()
+    h, w = img.shape
+    f = w / 2 / np.tan(np.radians(HFOV_DEG) / 2)
+    K = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]])
+    markers = []
+    for c, i in zip(corners, [] if ids is None else ids.ravel()):
+        obj = corners_m(int(i))
+        _, rvec, tvec = cv.solvePnP(obj, c[0], K, None, flags=cv.SOLVEPNP_IPPE_SQUARE)
+        proj, _ = cv.projectPoints(obj, rvec, tvec, K, None)
+        x, _, z = tvec.ravel()
+        markers.append({
+            "id": int(i),
+            "dist_m": round(float(np.linalg.norm(tvec)), 2),
+            "bearing_deg": round(float(np.degrees(np.arctan2(x, z))), 1),
+            "reproj_px": round(float(np.abs(proj.reshape(-1, 2) - c[0]).mean()), 2),
+            "corners": c[0].round(1).tolist(),
+        })
+    t3 = time.perf_counter()
+    ms = lambda a, b: round((b - a) * 1000, 1)
+    return {
+        "markers": markers, "pose": None, "obstacle": None, "decision": None, "ask_human": None,
+        "cv_version": cv.__version__,
+        "latency_ms": {"decode": ms(t0, t1), "aruco": ms(t1, t2), "pnp": ms(t2, t3), "total": ms(t0, t3)},
+    }
+
+
+@app.post("/upload")
+async def upload(request: Request, session: str, room: str, ext: str = "mp4", seen: str = "",
+                 x_api_key: str = Header("")):
+    check(x_api_key)
+    if not all(SAFE.match(v) for v in (session, room, ext)):
+        raise HTTPException(400, "bad name")
+    folder = UPLOADS / session
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{room}.{ext}"
+    size = 0
+    with open(path, "wb") as f:
+        async for chunk in request.stream():
+            f.write(chunk)
+            size += len(chunk)
+    with open(folder / "manifest.jsonl", "a") as f:
+        f.write(json.dumps({"t": time.time(), "room": room, "file": path.name, "bytes": size,
+                            "seen": seen, "ua": request.headers.get("user-agent")}) + "\n")
+    return {"ok": True, "bytes": size}
+
+
+def session_dir(session: str, room: str = "x"):
+    if not (SAFE.match(session) and SAFE.match(room)):
+        raise HTTPException(400, "bad name")
+    return UPLOADS / session
+
+
+@app.get("/v0")
+def v0_page():
+    return FileResponse(ROOT / "static/v0.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/v0/session")
+def v0_session(session: str, x_api_key: str = Header("")):
+    check(x_api_key)
+    folder = session_dir(session)
+    if not (folder / "manifest.jsonl").exists():
+        raise HTTPException(404, "no such session")
+    clips = {}
+    for line in (folder / "manifest.jsonl").read_text().splitlines():
+        m = json.loads(line)
+        if m["room"] != "calib":
+            clips[m["room"]] = m["file"]
+    rooms = []
+    for room, file in clips.items():
+        path = folder / "v0" / f"{room}.json"
+        r = json.loads(path.read_text()) if path.exists() else None
+        if r and r["status"] == "running" and (job is None or job.poll() is not None):
+            r = {"status": "error", "error": "the measurement stopped (out of memory?)"}
+        rooms.append({"room": room, "file": file, "result": r})
+    return {"session": session, "rooms": rooms}
+
+
+@app.post("/v0/run")
+def v0_run(session: str, room: str, x_api_key: str = Header("")):
+    global job
+    check(x_api_key)
+    folder = session_dir(session, room)
+    if job and job.poll() is None:
+        raise HTTPException(409, "busy measuring another room, try again in a minute")
+    (folder / "v0").mkdir(exist_ok=True)
+    (folder / "v0" / f"{room}.json").write_text(json.dumps({"status": "running", "room": room, "t": time.time()}))
+    job = subprocess.Popen(["nice", "-n", "10", sys.executable, "-m", "v0.agent", str(folder), room], cwd=ROOT)
+    return {"ok": True}
+
+
+@app.post("/v0/answer")
+def v0_answer(session: str, room: str, ref: str, cm: float, x_api_key: str = Header("")):
+    check(x_api_key)
+    path = session_dir(session, room) / "v0" / f"{room}.json"
+    r = json.loads(path.read_text())
+    if ref not in {f["id"] for f in r.get("refs", [])} or not 5 <= cm <= 300:
+        raise HTTPException(400, "bad answer")
+    r["answers"][ref] = cm
+    r.update(estimate(r))
+    path.write_text(json.dumps(r, indent=1))
+    return r
+
+
+@app.get("/v0/file")
+def v0_file(session: str, room: str, name: str, x_api_key: str = Header("")):
+    check(x_api_key)
+    if name not in {"top.png", *(f"img{i}.jpg" for i in range(6))}:
+        raise HTTPException(400, "bad name")
+    return FileResponse(session_dir(session, room) / "v0" / f"{room}-{name}")

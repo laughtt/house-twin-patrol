@@ -1,0 +1,171 @@
+"""Drift test in the twin: a duck-height camera walks a known route; odometry with realistic error; OpenCV markers and the
+simulated 8x8 ToF correct it. Compares odometry alone / +ToF / +markers / +both against the exact route.
+
+uv run --python 3.12 --with mujoco --with opencv-python-headless==5.0.0.93 --with matplotlib python eval/localize_test.py [--imperfect-map]
+--imperfect-map: the filter's map has every piece of furniture shifted up to 15 cm and misses a bag that is in the world.
+"""
+import importlib.util
+import json
+import math
+import sys
+from pathlib import Path
+
+import cv2 as cv
+import mujoco
+import numpy as np
+
+ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(ROOT))
+from agent import perceive  # noqa: E402
+from agent.localize import HouseMap, ParticleFilter  # noqa: E402
+
+ROBOT = Path.home() / "Pollen/microduck_rl/src/mjlab_microduck/robot/microduck"
+spec = importlib.util.spec_from_file_location("tof", ROBOT.parents[1] / "sim/tof.py")
+tofmod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(tofmod)
+
+house = json.loads((ROOT / "out/current/house.json").read_text())
+frame = json.loads((ROOT / "out/current/sim_frame.json").read_text())
+OUT = ROOT / ("out/localize_imperfect" if "--imperfect-map" in sys.argv else "out/localize")
+OUT.mkdir(exist_ok=True)
+HZ, SPEED, TURN = 5, 0.25, 0.8
+# hallway → kitchen walkway (look at #0) → back → hallway west (look at #2) → right corridor → living (look at #3)
+ROUTE = [(3.3, 2.4), (3.45, 0.9), (2.0, 0.9), ("face", -math.pi / 2), (3.45, 0.95), (3.45, 2.3), (1.0, 2.3),
+         ("face", math.pi), (3.45, 2.3), (3.45, 6.0), ("face", math.pi / 2), (1.0, 6.0)]
+
+(ROBOT / "twin_eye.xml").write_text('''<mujoco model="twin_eye">
+  <include file="myhouse.xml"/>
+  <visual><global offwidth="800" offheight="800"/><headlight diffuse="0.6 0.6 0.6" ambient="0.35 0.35 0.35"/></visual>
+  <worldbody>
+    <light pos="0 0 2.9" dir="0 0 -1" directional="true" castshadow="false"/>
+    <body name="eye" mocap="true" pos="0 0 0.2">
+      <camera name="eye" fovy="57.7" xyaxes="0 -1 0 0 0 1"/>
+      <site name="tof" size="0.01"/>
+    </body>
+    BAG
+  </worldbody>
+</mujoco>''')
+sizes = {m["id"]: m["size_m"] for m in house["markers"]}
+th, (px, py) = frame["theta"], frame["pos"]
+
+
+def truth_path():
+    x, y = ROUTE[0]
+    yaw = math.atan2(ROUTE[1][1] - y, ROUTE[1][0] - x)
+    poses = [(x, y, yaw)]
+    for step in ROUTE[1:]:
+        if step[0] == "face":
+            goal = step[1]
+        else:
+            goal = math.atan2(step[1] - y, step[0] - x)
+        while abs(d := (goal - yaw + math.pi) % (2 * math.pi) - math.pi) > 1e-3:  # turn on the spot
+            yaw += max(-TURN / HZ, min(TURN / HZ, d))
+            poses.append((x, y, yaw))
+        if step[0] != "face":
+            n = max(1, round(math.hypot(step[0] - x, step[1] - y) / (SPEED / HZ)))
+            for k in range(1, n + 1):
+                poses.append((x + (step[0] - x) * k / n, y + (step[1] - y) * k / n, yaw))
+            x, y = step
+    return poses
+
+
+def sense(x, y, yaw):
+    wx, wy = math.cos(th) * x - math.sin(th) * y + px, math.sin(th) * x + math.cos(th) * y + py
+    data.mocap_pos[0] = [wx, wy, 0.2]
+    data.mocap_quat[0] = [math.cos((yaw + th) / 2), 0, 0, math.sin((yaw + th) / 2)]
+    mujoco.mj_forward(model, data)
+    renderer.update_scene(data, camera="eye")
+    rgb = renderer.render()
+    return rgb, perceive.markers(cv.cvtColor(rgb, cv.COLOR_RGB2GRAY), K, sizes), tof.frame(data)
+
+
+rng = np.random.default_rng(7)
+truth = truth_path()
+IMPERFECT = "--imperfect-map" in sys.argv
+th, (px, py) = frame["theta"], frame["pos"]
+if IMPERFECT:  # the filter's map is wrong; the world it senses is the real twin plus a bag nobody mapped
+    mrng = np.random.default_rng(11)
+    fmap = json.loads(json.dumps(house))
+    for o in fmap["objects"]:
+        o["center"] = [c + float(mrng.uniform(-0.15, 0.15)) for c in o["center"]]
+    hmap = HouseMap(fmap)
+    bag = (3.45, 4.4)  # on the right corridor the route uses
+    bx_, by_ = math.cos(th) * bag[0] - math.sin(th) * bag[1] + px, math.sin(th) * bag[0] + math.cos(th) * bag[1] + py
+else:
+    hmap = HouseMap(house)
+xml = (ROBOT / "twin_eye.xml").read_text().replace("BAG", f'<geom type="box" pos="{bx_:.3f} {by_:.3f} 0.15" size="0.2 0.15 0.15" rgba="0.2 0.3 0.6 1"/>' if IMPERFECT else "")
+(ROBOT / "twin_eye_run.xml").write_text(xml)
+model = mujoco.MjModel.from_xml_path(str(ROBOT / "twin_eye_run.xml"))
+data = mujoco.MjData(model)
+renderer = mujoco.Renderer(model, 640, 480)
+tof = tofmod.Tof(model, model.site("tof").id, seed=1)
+fy = 320 / math.tan(math.radians(model.cam_fovy[0]) / 2)
+K = np.array([[fy, 0, 240], [0, fy, 320], [0, 0, 1]])
+x0, y0, yaw0 = truth[0]
+filters = {name: ParticleFilter(hmap, x0, y0, yaw0, seed=3) for name in ("+ToF", "+markers", "+both")}
+dead = [x0, y0, yaw0]
+log = {name: [] for name in ("odometry only", *filters)}
+seen, shots = [], 0
+for k in range(1, len(truth)):
+    (ax, ay, ayaw), (bx, by, byaw) = truth[k - 1], truth[k]
+    fwd = (bx - ax) * math.cos(ayaw) + (by - ay) * math.sin(ayaw)
+    turn = (byaw - ayaw + math.pi) % (2 * math.pi) - math.pi
+    # the duck's own odometry: 4 % long, drifts 2 % sideways, ~3°/m heading bias, plus noise
+    of = fwd * 1.04 + rng.normal(0, 0.02 * abs(fwd))
+    ol = 0.02 * abs(fwd) + rng.normal(0, 0.03 * abs(fwd))
+    ot = turn * 1.03 + 0.05 * abs(fwd) + rng.normal(0, 0.01 * abs(turn) + 0.01 * abs(fwd))
+    dead[0] += of * math.cos(dead[2]) - ol * math.sin(dead[2])
+    dead[1] += of * math.sin(dead[2]) + ol * math.cos(dead[2])
+    dead[2] += ot
+    rgb, found, (dist, status) = sense(bx, by, byaw)
+    for name, f in filters.items():
+        f.predict(of, ol, ot)
+        if name in ("+ToF", "+both"):
+            f.update_tof(dist, status)
+        if name in ("+markers", "+both"):
+            for m in found:
+                f.update_marker(m["id"], m["solutions"])
+    for m in found:
+        seen.append((k, m["id"], float(np.linalg.norm(m["solutions"][0][1]))))
+        if shots < 6 and k % 5 == 0:  # a few duck-eye frames with the detection drawn, for the report
+            img = cv.cvtColor(rgb, cv.COLOR_RGB2BGR)
+            cv.aruco.drawDetectedMarkers(img, [m["corners"][None]], np.array([[m["id"]]]))
+            R, t, _ = m["solutions"][0]
+            cv.drawFrameAxes(img, K, None, cv.Rodrigues(R)[0], t, 0.08)
+            cv.putText(img, f'#{m["id"]}  {np.linalg.norm(t):.2f} m', (10, 30), cv.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+            cv.imwrite(str(OUT / f"duck_eye_{shots}.jpg"), img)
+            shots += 1
+    for name, est in [("odometry only", dead), *((n, f.estimate()) for n, f in filters.items())]:
+        log[name].append(math.hypot(est[0] - bx, est[1] - by))
+        if name == "+both":
+            log.setdefault("_track", []).append((bx, by, est[0], est[1], dead[0], dead[1]))
+
+t = np.arange(1, len(truth)) / HZ
+summary = {name: {"median_m": round(float(np.median(e)), 3), "p90_m": round(float(np.percentile(e, 90)), 3),
+                  "max_m": round(float(np.max(e)), 3), "final_m": round(float(e[-1]), 3)}
+           for name, e in log.items() if not name.startswith("_")}
+summary["route"] = {"seconds": round(float(t[-1]), 1), "metres": round(float(sum(math.hypot(truth[i][0] - truth[i - 1][0], truth[i][1] - truth[i - 1][1]) for i in range(1, len(truth)))), 1),
+                    "frames": len(truth) - 1, "marker_sightings": len(seen), "marker_ids": sorted({s[1] for s in seen}),
+                    "sighting_range_m": [round(min(s[2] for s in seen), 2), round(max(s[2] for s in seen), 2)] if seen else None}
+(OUT / "results.json").write_text(json.dumps(summary, indent=1))
+
+import matplotlib  # noqa: E402
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt  # noqa: E402
+fig, (a1, a2) = plt.subplots(1, 2, figsize=(13, 5), gridspec_kw={"width_ratios": [1.6, 1]})
+for name, e in log.items():
+    if not name.startswith("_"):
+        a1.plot(t, e, label=f'{name} (median {summary[name]["median_m"]:.2f} m)')
+for k, i, _ in seen:
+    a1.axvline(k / HZ, color="green", alpha=0.08)
+a1.set_xlabel("time (s)"); a1.set_ylabel("position error (m)"); a1.set_title("Duck position error on the route (green = marker in view)"); a1.legend()
+tr = np.array(log["_track"])
+a2.imshow(~hmap.grid[::-1], cmap="gray", extent=(-0.02, hmap.W + 0.04, -0.02, hmap.L + 0.04), alpha=0.5)
+a2.plot(tr[:, 0], tr[:, 1], "k-", lw=2, label="true path")
+a2.plot(tr[:, 4], tr[:, 5], "r--", label="odometry only")
+a2.plot(tr[:, 2], tr[:, 3], "b-", label="filter (+both)")
+for m in house["markers"]:
+    a2.plot(m["x"], m["y"], "gs"); a2.annotate(f'#{m["id"]}', (m["x"], m["y"]), color="green")
+a2.set_aspect("equal"); a2.set_title("Seen from above (m)"); a2.legend(loc="center right", fontsize=8)
+fig.tight_layout(); fig.savefig(OUT / "drift.png", dpi=110)
+print(json.dumps(summary, indent=1))
