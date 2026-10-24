@@ -2,7 +2,7 @@
 are scored against the true labels.
 
 uv run --python 3.12 --with opencv-python-headless==5.0.0.93 --with boto3 python eval/curate_bench.py prepare <scan.zip> <name>
-uv run ... python eval/curate_bench.py run [rules,opencv,clip,gemini,hybrid,haiku]
+uv run ... python eval/curate_bench.py run [rules,opencv,clip,gemini,hybrid,haiku]   (score [...]: re-score saved answers)
 
 prepare: the pipeline up to the landmark candidates (no checker), cached in out/curate_bench/<name>/ (cands.json,
 crops/<id>.jpg, frame.json with the scan's house frame).
@@ -71,8 +71,8 @@ def truth_for(name, cands):
     c, s = np.cos(fr["theta"]), np.sin(fr["theta"])
     boxes = []
     for b in json.loads(lab.read_text())["boxes"]:  # ARKit world (y up) → the scan's house frame before the origin shift
-        x, y = b["centre"][0], -b["centre"][2]
-        boxes.append((canon(b["label"]), np.array([c * x + s * y, -s * x + c * y]), max(b["size"][0], b["size"][2])))
+        x, y = b["center"][0], -b["center"][2]
+        boxes.append((canon(b["label"]), np.array([c * x + s * y, -s * x + c * y]), max(b["size"])))
     out = {}
     for cd in cands:
         best = min(boxes, key=lambda b: np.linalg.norm(b[1] - cd["center"]), default=None)
@@ -107,18 +107,24 @@ def run(backends):
         rooms = json.loads((d / "frame.json").read_text())["rooms"]
         for b in backends:
             t = time.time()
-            dec, note = curate.curate(cands, crops, rooms, backend=b)
-            row = {"map": d.name, "backend": b, "candidates": len(cands), "with_truth": len(truth), "seconds": round(time.time() - t, 1),
+            if SCORE_ONLY:  # re-score the saved answers (no new API calls)
+                saved = json.loads((d / f"decisions_{b}.json").read_text())
+                dec, note = saved["decisions"], {**saved["note"], "seconds": saved["note"].get("seconds", 0)}
+            else:
+                dec, note = curate.curate(cands, crops, rooms, backend=b)
+            row = {"map": d.name, "backend": b, "candidates": len(cands), "with_truth": len(truth), "seconds": note.get("seconds", 0) if SCORE_ONLY else round(time.time() - t, 1),
                    "sent_to_cloud": len(cands) if b in ("gemini", "haiku") else int(str(note.get("asked", "0/")).split("/")[0] or 0),
                    **score(dec, truth), "error": note.get("error", "")[:80]}
             rows.append(row)
-            (d / f"decisions_{b}.json").write_text(json.dumps({"note": note, "decisions": dec}, indent=1))
+            if not SCORE_ONLY:
+                (d / f"decisions_{b}.json").write_text(json.dumps({"note": note, "decisions": dec}, indent=1))
             print(json.dumps(row))
     (OUT / "results.json").write_text(json.dumps(rows, indent=1))
     return rows
 
 
 if __name__ == "__main__":
+    SCORE_ONLY = sys.argv[1] == "score"
     if sys.argv[1] == "prepare":
         prepare(sys.argv[2], sys.argv[3])
     else:
