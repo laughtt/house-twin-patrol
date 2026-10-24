@@ -25,3 +25,20 @@ bench = { zones = ["hall", "entry", "garden"], else = "" }
 [markers]
 # printed sizes by id (metres): see capture/make_markers.py
 sizes = [{ ids = [0, 9], m = 0.15 }, { ids = [10, 29], m = 0.10 }, { ids = [30, 39], m = 0.20 }, { ids = [40, 40], m = 0.15 }]
+
+[landmarks]
+low_h = 0.6        # a frame is "duck height" when the camera is lower than this (m)
+min_views = 3      # without the curate model: detector landmarks seen in fewer keyframes are dropped (tags always kept)
+# how much the duck trusts a sighting, by how often that kind of thing moves ("ignore" = not a landmark)
+weight = { fixed = 1.0, rare = 0.6, often = 0.2 }
+fixed = ["fridge", "oven", "stove", "sink", "counter", "toilet", "washer", "wardrobe", "door", "window", "bathtub"]
+often = ["chair", "potted plant", "plant", "bench", "suitcase", "backpack", "handbag", "umbrella", "bicycle"]
+ignore = ["person", "dog", "cat", "cup", "bottle", "wine glass", "bowl", "cell phone", "book", "remote", "teddy bear"]
+# the detector class a tag label answers to (tags with no class still go in house.json, for goals like "go to the sofa")
+tag_cls = { fridge = "refrigerator", oven = "oven", stove = "oven", sink = "sink", sofa = "couch", bed = "bed", tv = "tv", table = "dining table", toilet = "toilet", plant = "potted plant" }
+
+[curate]
+# a small model checks the landmark list (keep / name / merge / how often it moves); empty model = config lists only
+model = "global.anthropic.claude-haiku-5-5"
+region = "us-east-1"
+max_images = 24

@@ -17,7 +17,7 @@ import build_house  # noqa: E402
 scan = Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / "out/lidar/synth-multi.zip")
 truth = json.loads((scan.parent / f"{scan.stem}.truth.json").read_text())
 fake = lambda img, up, name: [(cls, 0.9, b) for cls, b in truth["boxes2d"].get(name, [])]  # noqa: E731 - YOLOX can't name test boxes
-house, out = build_house.build(scan, ROOT / "out/houses" / scan.stem, detect_fn=fake)
+house, out = build_house.build(scan, ROOT / "out/houses" / scan.stem, detect_fn=fake, use_model=False)
 
 # line up with the truth: 2D rigid fit on the markers both sides know
 ours = {m["id"]: (m["x"], m["y"], m["yaw"]) for m in house["markers"]}

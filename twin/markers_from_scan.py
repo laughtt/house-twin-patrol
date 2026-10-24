@@ -11,8 +11,8 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lidar" / "pipeline"))
-from build_house import Export, kmat  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from twin.scan_io import Export, kmat  # noqa: E402
 
 _params = cv.aruco.DetectorParameters()
 _params.cornerRefinementMethod = cv.aruco.CORNER_REFINE_SUBPIX
