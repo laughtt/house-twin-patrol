@@ -106,14 +106,16 @@ struct ContentView: View {
                         Button { key.isEmpty ? settings = true : rec.upload(key: key) } label: {
                             Label(key.isEmpty ? "Upload — add your link in ⚙️ first" : "Upload", systemImage: "icloud.and.arrow.up")
                         }
-                        .frame(maxWidth: .infinity, minHeight: 44).background(.white).cornerRadius(8)
+                        .frame(maxWidth: .infinity, minHeight: 44).background(.white).cornerRadius(8).disabled(rec.uploading)
                     }
                     if !rec.status.isEmpty {
                         Text(rec.status).font(.callout).padding(6).background(.black.opacity(0.6)).foregroundColor(.white).cornerRadius(6)
                     }
+                    if let b = rec.build, !rec.recording { house(b) }
                 }
                 .padding()
             }
+            .overlay { if rec.scoring { ScoreCard(rec: rec) } }
             .onAppear { rec.run(); rec.veil.isEnabled = veil }
             .onChange(of: veil) { rec.veil.isEnabled = $0 }
             .sheet(isPresented: $settings) { Settings(zones: $zones, key: $key, veil: $veil, tagLabels: $tagLabels) }
@@ -129,6 +131,7 @@ struct ContentView: View {
         guard rec.recording else { return nil }
         if rec.lowTilted { return "Camera straight ahead, not at the floor — like the duck's eyes" }
         if rec.lowFast { return "Slower — hold still a second in each direction" }
+        if rec.sinceZone >= 8 { return "New room? Tap its name" }
         if rec.walls[rec.room, default: 0] >= 25 && rec.sectors[rec.room, default: []].count < 4 { return "Now go low ⬇︎ duck height" }
         return nil
     }
@@ -162,8 +165,111 @@ struct ContentView: View {
         .background(.black.opacity(0.5)).foregroundColor(.white).cornerRadius(10)
     }
 
+    /// The server's build result for this session: rooms, counts, curator warnings and links to the web views.
+    func house(_ b: [String: Any]) -> some View {
+        let r = b["report"] as? [String: Any] ?? [:], curate = r["curate"] as? [String: Any]
+        let n = { (v: Any?) in (v as? Int).map(String.init) ?? (v as? [Any]).map { String($0.count) } ?? "–" }
+        let spaces = (r["spaces"] as? [String: [String: Any]] ?? [:]).sorted { $0.key < $1.key }
+        let state = b["state"] as? String
+        let link = { (path: String) -> URL in
+            var c = URLComponents(string: "https://game.adtomic.co" + path)!
+            c.queryItems = [.init(name: "s", value: rec.sessionID), .init(name: "k", value: key)]
+            return c.url!
+        }
+        return VStack(alignment: .leading, spacing: 4) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(state == "done" ? "House built" : state == "failed" ? "Build failed" : "Still building on the server").font(.headline)
+                    if state == "failed" { Text(String((b["log"] as? String ?? "").suffix(400))).font(.caption.monospaced()) }
+                    ForEach(spaces, id: \.key) { name, s in
+                        Text(String(format: "%@  %.1f × %.1f m · %.0f m²", name, s["w_m"] as? Double ?? 0, s["l_m"] as? Double ?? 0, s["area_m2"] as? Double ?? 0))
+                    }
+                    if state == "done" {
+                        Text("Duck-height frames \(n(r["frames_low"])) · doors \(n(r["doors"])) · objects \(n(r["objects"]))")
+                        Text("Landmarks \(n(r["landmarks"] ?? b["landmarks"])) · candidates \(n(r["landmark_candidates"] ?? b["candidates"]))")
+                        if let by = curate?["by"] as? String { Text("Curated by \(by)").font(.caption) }
+                        ForEach((curate?["warnings"] as? [String] ?? []).prefix(3), id: \.self) { Text("⚠︎ " + $0).font(.caption).foregroundColor(.orange) }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 220).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Link(destination: link("/lidar")) { Label("Open results", systemImage: "safari") }
+                    .frame(maxWidth: .infinity, minHeight: 40).background(.white).foregroundColor(.blue).cornerRadius(8)
+                Link(destination: link("/lidar/3d")) { Label("View in 3D", systemImage: "cube") }
+                    .frame(maxWidth: .infinity, minHeight: 40).background(.white).foregroundColor(.blue).cornerRadius(8)
+            }
+        }
+        .font(.callout.monospacedDigit()).padding(8).background(.black.opacity(0.6)).foregroundColor(.white).cornerRadius(10)
+    }
+
     static func items(_ list: String) -> [String] {
         list.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+}
+
+/// Shown on Stop: how complete the recording is, per zone, before the review.
+struct ScoreCard: View {
+    @ObservedObject var rec: Recorder
+    typealias Row = (mark: Color, title: String, tip: String)
+
+    var body: some View {
+        let zones = rec.walked.keys.sorted(), total = rec.walked.values.reduce(0, +)
+        let short = zones.filter { rec.walked[$0, default: 0] < 4 }
+        let zoneRow: Row = zones.count == 1 && total > 15 ? (.red, "1 zone for \(Int(total)) m walked", "Rooms will merge into one: fix zones in the review")
+            : !short.isEmpty ? (.orange, "\(zones.count) zones, \(short.joined(separator: ", ")) under 4 m", "Check those zones in the review")
+            : (.green, "\(zones.count) zones · \(Int(total)) m walked", "Each room has its own zone")
+        let low: [Row] = zones.map { z in
+            let k = rec.sectors[z]?.count ?? 0
+            return (k >= 6 ? .green : k >= 3 ? .orange : .red, "\(z) \(k)/8 directions", k >= 6 ? "Duck height covered" : "Few low views: the duck may get lost here")
+        }
+        let tags: [Row] = zones.map { z in
+            let k = rec.tags.filter { $0.room == z }.count
+            return (k >= 2 ? .green : .orange, "\(z) \(k) tag\(k == 1 ? "" : "s")", k >= 2 ? "Enough fixed objects" : "Tag 2+ things that never move")
+        }
+        let mb = rec.bytes / 1_000_000, d = Int(rec.duration)
+        let size: Row = (mb > 500 ? .red : .green, String(format: "%d:%02d · %d frames · %d MB", d / 60, d % 60, rec.frames, mb),
+                         mb > 500 ? "Over 500 MB: the upload limit is 600 MB" : "Size is fine")
+        let red = (low + [size]).filter { $0.mark == .red }.map(\.title)
+        let warn = ([zoneRow] + low + tags).filter { $0.mark != .green }.map(\.title)
+        let overall = !red.isEmpty ? "Consider recording again: " + red.prefix(3).joined(separator: ", ")
+            : !warn.isEmpty ? "Usable, but " + warn.prefix(3).joined(separator: ", ") : "Good to upload"
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Recording check").font(.title2.bold())
+            Text(overall).font(.headline).foregroundColor(!red.isEmpty ? .red : !warn.isEmpty ? .orange : .green)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    section("Zones", [zoneRow])
+                    section("Duck-height pass", low)
+                    section("Tags", tags)
+                    section("Length", [size])
+                }
+            }
+            HStack {
+                Button("Skip") { rec.scoring = false; rec.save(nil, nil) }
+                    .frame(maxWidth: .infinity, minHeight: 48).background(.gray.opacity(0.4)).cornerRadius(10)
+                Button("Review zones & tags") { rec.scoring = false; rec.reviewing = true }.font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 48).background(.green).cornerRadius(10)
+            }
+        }
+        .foregroundColor(.white).padding()
+        .background(Color.black.ignoresSafeArea())
+    }
+
+    func section(_ name: String, _ rows: [Row]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(name.uppercased()).font(.caption.bold()).foregroundColor(.gray)
+            ForEach(rows.indices, id: \.self) { i in
+                HStack(alignment: .firstTextBaseline) {
+                    Circle().fill(rows[i].mark).frame(width: 12, height: 12)
+                    VStack(alignment: .leading) {
+                        Text(rows[i].title).font(.body.bold().monospacedDigit())
+                        Text(rows[i].tip).font(.caption).foregroundColor(.white.opacity(0.75))
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -227,13 +333,14 @@ struct Settings: View {
 
 struct Sessions: View {
     @ObservedObject var rec: Recorder
+    @AppStorage("apiKey") var key = ""
     @State var ids: [String] = []
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
         NavigationView {
             List {
-                ForEach(ids, id: \.self) { id in Button(id) { rec.open(id); dismiss() } }
+                ForEach(ids, id: \.self) { id in Button(id) { rec.open(id); if !key.isEmpty { rec.poll(key: key, once: true) }; dismiss() } }
                     .onDelete { $0.forEach { rec.delete(ids[$0]) }; ids = rec.sessions() }
             }
             .overlay { if ids.isEmpty { Text("No recordings yet").foregroundColor(.secondary) } }

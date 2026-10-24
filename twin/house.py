@@ -80,7 +80,22 @@ def occupancy(path, V, o, gm, cell=0.05, dz=0.1, top=2.0):
     occ = np.zeros((int(top / dz), ij[:, 1].max() + 1, ij[:, 0].max() + 1), bool)
     occ[k, ij[:, 1], ij[:, 0]] = True
     np.savez_compressed(path, occ=occ, lo=lo, cell=cell, dz=dz, ground=gm[2], ground_lo=gm[0] - o, ground_tile=gm[1])  # + floor heights
+    stage_pictures(Path(path).parent, occ, gm[2])
     return {"file": Path(path).name, "cell": cell, "dz": dz, "lo": [round(float(v), 3) for v in lo], "shape": list(occ.shape)}
+
+
+def stage_pictures(out, occ, ground, px=3):
+    """What two stages saw, for the results page: the local floor tiles and what a 20 cm sensor can hit (north up)."""
+    seen = cv.resize(occ.any(0).astype(np.uint8) * 70, None, fx=px, fy=px, interpolation=cv.INTER_NEAREST)
+    duck = cv.resize(occ[1:4].any(0).astype(np.uint8) * 255, None, fx=px, fy=px, interpolation=cv.INTER_NEAREST)
+    img = cv.merge([np.maximum(seen, duck // 3), np.maximum(seen, duck), np.maximum(seen, duck)])  # grey: any height, cyan: 10-40 cm
+    cv.imwrite(str(out / "stage_occupancy.png"), img[::-1])
+    mid = float(np.median(ground))
+    norm = np.clip((ground - mid + 0.15) / 0.3 * 255, 0, 255).astype(np.uint8)  # ±15 cm around the usual floor
+    tiles = cv.applyColorMap(cv.resize(norm, None, fx=20, fy=20, interpolation=cv.INTER_NEAREST), cv.COLORMAP_VIRIDIS)[::-1].copy()
+    cv.putText(tiles, f"floor {ground.min() - mid:+.2f} .. {ground.max() - mid:+.2f} m around the usual level", (8, 22),
+               cv.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+    cv.imwrite(str(out / "stage_floor.png"), tiles)
 
 
 def top_view(path, house, wall_pts, traj, tlab, px=80):

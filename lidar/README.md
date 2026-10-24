@@ -29,7 +29,8 @@ so every zone needs a chest-height sweep, a slow duck-height turn and a few tagg
    "Height 1.32 m" once ARKit has found it.
 3. **Walls**: walk slowly (about half a normal pace), the phone at chest height and tilted a little down so the floor shows,
    and sweep every wall (25 s per zone at ≥ 0.9 m). When you go through a doorway, tap **Doorway**, then tap the new
-   room's zone just after you step in.
+   room's zone just after you step in. After 8 m walked in one zone the cyan banner asks "New room? Tap its name":
+   tap the new room (or the same zone if you are still in it) so rooms don't merge into one.
 4. **Low pass**: go down to duck height (phone below your knee, under 60 cm, camera level (not at the floor)) and turn slowly all the way round, holding still
    about a second in each direction. The 8-segment ring fills one 45° sector per direction (yellow = where you face now).
    The cyan banner says "Now go low" when the walls are done and "Slower" when you move too fast down there.
@@ -41,11 +42,20 @@ so every zone needs a chest-height sweep, a slow duck-height turn and a few tagg
    walls and floor are bright. "Scanned: N m²" grows while you capture new surfaces; "Nothing new here" means move on.
    The veil can be turned off in Settings; it is feedback only and not saved.
 8. **Stop** when every zone is done (keep it under 500 MB, the upload limit is 600 MB; the counter shows the size).
+   A **Recording check** card scores it: zones used (red: one zone for over 15 m walked; orange: a zone under 4 m),
+   duck-height directions per zone (green ≥ 6/8, orange 3–5, red < 3), tags per zone (green ≥ 2), length, frames and MB
+   (red over 500 MB), and one verdict line. The numbers also go to `session.json` → `score`.
+   **Review zones & tags** continues to the review; **Skip** packs the zip right away.
 9. The review screen opens: drag on the colour strip or tap a thumbnail to find a moment. Tapping a zone relabels
    *from there to the next change* (moves a boundary earlier or adds a zone you forgot); with **Select range from here**
    it relabels just the selected range (moves a boundary later). **Save** (or **Skip**) packs the zip; with tags it is
    **Next** and the Tags step lists each tag with a crop of its frame: tap to change the label, swipe to delete, **Save**.
-10. **Share / AirDrop** to the Mac, or **Upload** (sends it to `/upload?session=<id>&room=lidar&ext=zip`).
+10. **Share / AirDrop** to the Mac, or **Upload** (sends it to `/upload?session=<id>&room=lidar&ext=zip`). The screen
+   stays awake while uploading; on failure tap **Upload** again.
+11. After the upload the app polls `/lidar/status?session=<id>` every 5 s (up to 10 min) and shows a **House built** card:
+   each space's size, duck-height frames, doors, objects, landmarks and candidates, the curator model and its first
+   warnings. **Open results** and **View in 3D** open the web pages in Safari. Reopening a session from the folder
+   shows the card again if the server has built it.
    The folder icon lists earlier recordings (they survive app updates): tap one, then **Zones & tags** to review it again,
    share or upload it; swipe to delete. They also show in the Files app under *On My iPhone → Twin LiDAR*.
 
@@ -60,7 +70,7 @@ Output: `out/lidar/<session>/house.json, top.png, cloud.ply, report.json`. Test 
 ## Export format (`<session>.zip` → `<session>/…`)
 | file | content |
 |---|---|
-| `session.json` | session id, device, fps, `"format": 2` and a short note on each format |
+| `session.json` | session id, device, fps, `"format": 2`, a short note on each format, and `score` (written on Stop): `{"zones": 3, "walked_m": {zone: m}, "sectors": {zone: 0–8}, "tags": {zone: n}, "duration_s", "frames", "mb"}` |
 | `frames.jsonl` | one JSON line per frame (below), about 4 per second |
 | `rgb/NNNNNN.jpg` | 960×720 JPEG (q 0.6) in the **sensor's landscape orientation** (not rotated for portrait) |
 | `depth/NNNNNN.bin` | 256×192 Float16 little-endian, metres along the camera's viewing axis (z-depth), row-major |

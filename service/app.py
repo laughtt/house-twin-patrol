@@ -225,9 +225,47 @@ async def lidar_save_tags(session: str, request: Request, x_api_key: str = Heade
 @app.get("/lidar/file")
 def lidar_file(session: str, name: str, x_api_key: str = Header("")):
     check(x_api_key)
-    if name not in {"top.png", "house.json", "report.json", "candidates.json", "cloud.bin"}:
+    if name not in {"top.png", "house.json", "report.json", "candidates.json", "cloud.bin", "stage_floor.png", "stage_occupancy.png"}:
         raise HTTPException(400, "bad name")
     return FileResponse(session_dir(session) / "house" / name)
+
+
+@app.get("/lidar/capture")
+def lidar_capture(session: str, x_api_key: str = Header("")):
+    """Step 1 as data: every 2nd frame's camera height above the floor under it, tilt, zone and tracking; the zone taps
+    and tags; the app's own score card (session.json score)."""
+    check(x_api_key)
+    ex = scan(session)
+    out = session_dir(session) / "house"
+    rep = json.loads((out / "report.json").read_text()) if (out / "report.json").exists() else None
+    ground = None
+    if rep and (out / "occupancy.npz").exists():
+        z = np.load(out / "occupancy.npz")
+        ground = (z["ground_lo"], float(z["ground_tile"]), z["ground"])
+    frames = []
+    for f in ex.frames[::2]:
+        T = np.array(f["T"]).reshape(4, 4)
+        h, pitch = None, float(np.degrees(np.arcsin(np.clip(-T[1, 2], -1, 1))))  # the camera looks along -z
+        if rep:
+            sf = rep["scan_frame"]
+            c, s_ = np.cos(sf["theta"]), np.sin(sf["theta"])
+            x, y = T[0, 3], -T[2, 3]
+            x, y = c * x + s_ * y - sf["origin"][0], -s_ * x + c * y - sf["origin"][1]
+            h = T[1, 3] - sf["z0"]
+            if ground:
+                from twin.fuse import ground_at
+                h -= float(ground_at(ground, [x, y]))
+            h = round(float(h), 3)
+        frames.append({"t": round(f["t"], 1), "h": h, "h_app": f.get("h"), "pitch": round(pitch), "room": f["room"], "tracking": f["tracking"]})
+    meta = ex.json("session.json") or {}
+    return {"frames": frames, "events": [{k: e.get(k) for k in ("t", "event", "room", "label")} for e in ex.events()],
+            "tags": ex.tags(), "score": meta.get("score"), "format": meta.get("format", 1),
+            "low_h": __import__("twin").CFG["landmarks"]["low_h"], "mb": round((session_dir(session) / "lidar.zip").stat().st_size / 1e6)}
+
+
+@app.get("/lidar/how")
+def lidar_how():
+    return FileResponse(ROOT / "static/how.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/lidar/3d")

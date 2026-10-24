@@ -43,6 +43,12 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     @Published var lowFast = false
     @Published var lowTilted = false
     @Published var tags: [Tag] = []
+    @Published var walked: [String: Double] = [:]
+    @Published var sinceZone = 0.0
+    @Published var scoring = false
+    @Published var uploading = false
+    @Published var build: [String: Any]?
+    private(set) var duration = 0.0
     let veil = AnchorEntity(.camera)
     private(set) var dir: URL!
     private let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -60,6 +66,8 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     private var floorSure = false
     private var stillSince: TimeInterval?, lowSince: TimeInterval = 0, lowSector: Int?
     private var forceNext = false, tagShot: [String: Any]?, tagLabel: String?
+    private var walkRef: SIMD2<Float>?
+    private var poller: Task<Void, Never>?
 
     func run() {
         guard supported else { return }
@@ -108,6 +116,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         events = handle("events.jsonl")
         frames = 0; bytes = 0; zip = nil; status = ""; t0 = now; last = 0
         walls = [:]; sectors = [:]; tags = []; forceNext = false; tagShot = nil
+        walked = [:]; sinceZone = 0; walkRef = nil; poller?.cancel(); build = nil
         recording = true
         UIApplication.shared.isIdleTimerDisabled = true
         mark("room")
@@ -116,9 +125,19 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     func stop() {
         recording = false
         UIApplication.shared.isIdleTimerDisabled = false
+        duration = now - t0
+        let zones = walked.keys.sorted(), r1 = { (x: Double) in (x * 10).rounded() / 10 }
+        let score: [String: Any] = [
+            "zones": zones.count, "walked_m": walked.mapValues(r1), "duration_s": r1(duration), "frames": frames, "mb": bytes / 1_000_000,
+            "sectors": Dictionary(uniqueKeysWithValues: zones.map { ($0, sectors[$0]?.count ?? 0) }),
+            "tags": Dictionary(uniqueKeysWithValues: zones.map { z in (z, tags.filter { $0.room == z }.count) })]
         queue.async { [self] in
             try? lines?.close(); try? events?.close()
-            DispatchQueue.main.async { [self] in reviewing = true }
+            let url = dir.appendingPathComponent("session.json")
+            var meta = (try? JSONSerialization.jsonObject(with: Data(contentsOf: url))) as? [String: Any] ?? [:]
+            meta["score"] = score
+            try? JSONSerialization.data(withJSONObject: meta, options: .prettyPrinted).write(to: url)
+            DispatchQueue.main.async { [self] in scoring = true }
         }
     }
 
@@ -144,6 +163,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     func open(_ id: String) {
+        poller?.cancel(); build = nil
         sessionID = id
         dir = docs.appendingPathComponent(id)
         let z = docs.appendingPathComponent(id + ".zip")
@@ -155,12 +175,12 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     func delete(_ id: String) {
         try? FileManager.default.removeItem(at: docs.appendingPathComponent(id))
         try? FileManager.default.removeItem(at: docs.appendingPathComponent(id + ".zip"))
-        if id == sessionID { sessionID = ""; dir = nil; zip = nil; status = "" }
+        if id == sessionID { sessionID = ""; dir = nil; zip = nil; status = ""; poller?.cancel(); build = nil }
     }
 
     func enter(_ name: String) {
         room = name
-        if recording { mark("room") }
+        if recording { mark("room"); sinceZone = 0 }
     }
 
     func mark(_ event: String) {
@@ -249,24 +269,57 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     func upload(key: String) {
-        guard let zip else { return }
+        guard let zip, !uploading else { return }
         var url = URLComponents(string: "https://game.adtomic.co/upload")!
         url.queryItems = [.init(name: "session", value: sessionID), .init(name: "room", value: "lidar"), .init(name: "ext", value: "zip")]
         var req = URLRequest(url: url.url!, timeoutInterval: 900)
         req.httpMethod = "POST"
         req.setValue(key, forHTTPHeaderField: "X-API-Key")
         req.setValue("application/zip", forHTTPHeaderField: "Content-Type")
+        uploading = true
+        UIApplication.shared.isIdleTimerDisabled = true  // a locked phone kills the upload
         let task = URLSession.shared.uploadTask(with: req, fromFile: zip) { [self] _, resp, err in
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
             DispatchQueue.main.async { [self] in
                 progress = nil
-                status = err?.localizedDescription ?? (code == 200 ? "Uploaded \(sessionID)" : "Upload failed: HTTP \(code)")
+                uploading = false
+                UIApplication.shared.isIdleTimerDisabled = false
+                if err == nil && code == 200 { status = "Uploaded: building the house on the server…"; poll(key: key) }
+                else { status = "Upload failed — tap Upload to retry (\(err?.localizedDescription ?? "HTTP \(code)"))" }
             }
         }
         progress = task.progress.observe(\.fractionCompleted) { [self] p, _ in
-            DispatchQueue.main.async { [self] in status = "Uploading \(Int(p.fractionCompleted * 100)) %" }
+            DispatchQueue.main.async { [self] in if uploading { status = "Uploading \(Int(p.fractionCompleted * 100)) %" } }
         }
         task.resume()
+    }
+
+    /// Server build status every 5 s for up to 10 min. `once`: a reopened session, stop unless the server is building it.
+    func poll(key: String, once: Bool = false) {
+        poller?.cancel(); build = nil
+        var url = URLComponents(string: "https://game.adtomic.co/lidar/status")!
+        url.queryItems = [.init(name: "session", value: sessionID)]
+        var req = URLRequest(url: url.url!, timeoutInterval: 30)
+        req.setValue(key, forHTTPHeaderField: "X-API-Key")
+        poller = Task { @MainActor [self] in
+            for _ in 0..<120 {
+                let data = try? await URLSession.shared.data(for: req).0
+                guard !Task.isCancelled else { return }
+                let json = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
+                let state = json?["state"] as? String
+                if state == "done" || state == "failed" {
+                    build = json
+                    status = state == "done" ? "House built" : "Build failed on the server"
+                    return
+                }
+                if once && state != "building" { return }
+                status = "Building the house on the server…"
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled else { return }
+            }
+            build = ["state": "building"]
+            status = "Still building after 10 min: open the results later"
+        }
     }
 
     /// Every 0.2 s: floor and camera height, motion over the last 0.2 s, hold-still ring and the per-zone checklist.
@@ -298,6 +351,11 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
             hold = v
         } else { stillSince = nil; hold = 0 }
         if h.map({ $0 >= 0.9 }) ?? true { walls[room, default: 0] += min(dt, 0.5) }
+        // distance on the floor in 0.75 m steps, so hand jitter and turning on the spot don't add up; jumps over 5 m are relocalisation
+        let xz = SIMD2(p.x, p.z), d = walkRef.map { Double(simd_distance(xz, $0)) } ?? 0
+        if walkRef == nil || d >= 0.75 { walkRef = xz }
+        let step = d >= 0.75 && d < 5 ? d : 0
+        if walked[room] == nil || step > 0 { walked[room, default: 0] += step; sinceZone += step }
         let low = h.map { $0 < 0.6 } ?? false, calm = rot < 30 && speed < 0.15
         let level = abs(asin(Double(-T.columns.2.y))) < 25 * .pi / 180  // the duck looks straight ahead, not at the floor
         if low && !level != lowTilted { lowTilted = low && !level }
