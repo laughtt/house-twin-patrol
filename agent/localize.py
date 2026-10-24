@@ -98,15 +98,17 @@ class ParticleFilter:
         self._normalise()
 
     def update_tof(self, dist_mm, status):
-        """The two level rows (3 and 4) against the map: 16 ranges per particle."""
+        """The two level rows (3 and 4) against the map: 16 ranges per particle. Status 254 = no data for that zone
+        (an emulated sensor that does not cover it), which is skipped rather than read as "nothing in range"."""
         meas = np.array(dist_mm, float).reshape(8, 8)[3:5] / 1000.0
         valid = np.array(status).reshape(8, 8)[3:5] == 5
+        known = (np.array(status).reshape(8, 8)[3:5] != 254).any(0)
         meas = np.where(valid, meas, TOF_MAX + 1.0).mean(0)  # rows 3 and 4 look 2.8° up and down: average them
         x, y, yaw = (np.repeat(self.p[:, k:k + 1], 8, 1) for k in range(3))
         exp = self.map.raycast(x, y, yaw + TOF_AZ)
         sigma = 0.05 + 0.03 * np.minimum(exp, TOF_MAX)
         both_far = (exp > TOF_MAX) & (meas > TOF_MAX)
-        like = np.where(both_far, 1.0, np.exp(-0.5 * ((meas - exp) / sigma) ** 2)) * 0.9 + 0.1  # 0.1: things not on the map
+        like = np.where(both_far | ~known, 1.0, np.exp(-0.5 * ((meas - exp) / sigma) ** 2)) * 0.9 + 0.1  # 0.1: things not on the map
         self.w *= np.exp(np.log(like).sum(1) / 4)  # tempered: 8 zones are not independent evidence
         self._normalise()
 
