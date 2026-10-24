@@ -12,6 +12,7 @@ DEPTH_WH = (504, 280)
 MEAN, STD = np.array([0.485, 0.456, 0.406]), np.array([0.229, 0.224, 0.225])
 FURNITURE = {13: "bench", 56: "chair", 57: "couch", 59: "bed", 60: "dining table", 61: "toilet",
              69: "oven", 71: "sink", 72: "refrigerator"}
+LANDMARK = {**FURNITURE, 58: "potted plant", 62: "tv", 68: "microwave", 74: "clock"}  # things a robot can find itself by
 # the phone circles ~10-15 cm in front of the turning body, so every wall reads that much too close
 PHONE_SWING_M = 0.12
 aruco = cv.aruco.ArucoDetector(cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_50), cv.aruco.DetectorParameters())
@@ -79,7 +80,7 @@ def depth_pro(img):
     return cv.resize(d[0], DEPTH_WH), float(np.degrees(2 * np.arctan(768 / fpx.ravel()[0])))
 
 
-def detect(img, conf=0.45):
+def detect(img, conf=0.45, classes=FURNITURE):
     r = min(640 / img.shape[0], 640 / img.shape[1])
     h, w = round(img.shape[0] * r), round(img.shape[1] * r)
     pad = np.full((640, 640, 3), 114, np.uint8)
@@ -89,10 +90,10 @@ def detect(img, conf=0.45):
     xy, wh = (d[:, :2] + GRID) * STRIDE / r, np.exp(d[:, 2:4]) * STRIDE / r
     scores = d[:, 4:5] * d[:, 5:]
     cls, sc = scores.argmax(1), scores.max(1)
-    ok = np.nonzero((sc > conf) & np.isin(cls, list(FURNITURE)))[0]
+    ok = np.nonzero((sc > conf) & np.isin(cls, list(classes)))[0]
     boxes = np.c_[xy[ok] - wh[ok] / 2, wh[ok]]
     keep = cv.dnn.NMSBoxesBatched(boxes.tolist(), sc[ok].tolist(), cls[ok].tolist(), conf, 0.45)
-    return [(FURNITURE[int(cls[ok[i]])], float(sc[ok[i]]),
+    return [(classes[int(cls[ok[i]])], float(sc[ok[i]]),
              [*boxes[i, :2], *(boxes[i, :2] + boxes[i, 2:])]) for i in np.ravel(keep)]
 
 

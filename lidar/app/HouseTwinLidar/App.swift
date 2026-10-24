@@ -17,8 +17,10 @@ struct ContentView: View {
     @AppStorage("zones") var zones = "Kitchen,Living room,Dining,Bedroom,Bathroom,Hallway"
     @AppStorage("apiKey") var key = ""
     @AppStorage("veil") var veil = true
+    @AppStorage("tagLabels") var tagLabels = "Fridge,Oven,Stove,Sink,Sofa,Bed,TV,Table,Toilet,Washer,Wardrobe,Door,Window,Plant,Other"
     @State var settings = false
     @State var sessions = false
+    @State var tagging = false
 
     var body: some View {
         if !rec.supported {
@@ -27,12 +29,25 @@ struct ContentView: View {
         } else {
             ZStack {
                 Preview(view: rec.view).ignoresSafeArea()
+                if rec.recording {
+                    Color.clear.overlay {
+                        ZStack {
+                            Circle().stroke(.white.opacity(0.3), lineWidth: 4)
+                            Circle().trim(from: 0, to: rec.hold).stroke(rec.hold >= 1 ? Color.green : Color.white, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                                .rotationEffect(.degrees(-90)).animation(.linear(duration: 0.2), value: rec.hold)
+                            Image(systemName: "plus").font(.title2.weight(.light))
+                        }
+                        .foregroundColor(.white).frame(width: 54, height: 54).shadow(radius: 2)
+                    }
+                    .ignoresSafeArea().allowsHitTesting(false)
+                }
                 VStack(spacing: 10) {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading) {
                             Text("\(rec.frames) frames · \(rec.bytes / 1_000_000) MB")
                             Text("Room: \(rec.room)")
                             Text("Tracking: \(rec.tracking)")
+                            Text(rec.height.map { String(format: "Height %.2f m", $0) } ?? "Height: finding the floor…")
                             if veil { Text("Scanned: \(Int(rec.area)) m²") }
                         }
                         .font(.headline.monospacedDigit())
@@ -48,18 +63,22 @@ struct ContentView: View {
                             .font(.callout.bold()).padding(8).frame(maxWidth: .infinity)
                             .background(.orange).foregroundColor(.black).cornerRadius(8)
                     }
-                    if rec.recording && veil {
+                    if rec.recording { checklist }
+                    if let nudge {
+                        Text(nudge).font(.callout.bold()).padding(8).frame(maxWidth: .infinity)
+                            .background(.cyan).foregroundColor(.black).cornerRadius(8)
+                    } else if rec.recording && veil {
                         Text(rec.growth > 0.3 ? "New surfaces lighting up: keep sweeping slowly"
                                               : "Nothing new here: aim at the dark parts or move on")
                             .font(.callout.bold()).padding(6).background(.black.opacity(0.5)).foregroundColor(.white).cornerRadius(8)
                     }
-                    if rec.bytes > 250_000_000 {
-                        Text("Over 250 MB: stop soon (upload limit 300 MB)").font(.callout.bold())
+                    if rec.bytes > 500_000_000 {
+                        Text("Over 500 MB: stop soon (upload limit 600 MB)").font(.callout.bold())
                             .padding(8).background(.red).foregroundColor(.white).cornerRadius(8)
                     }
                     Spacer()
                     LazyVGrid(columns: [GridItem(), GridItem(), GridItem()]) {
-                        ForEach(zoneList, id: \.self) { z in
+                        ForEach(Self.items(zones), id: \.self) { z in
                             Button(z) { rec.enter(z) }
                                 .frame(maxWidth: .infinity, minHeight: 44)
                                 .background(z == rec.room ? Color.blue : Color.black.opacity(0.55))
@@ -67,15 +86,19 @@ struct ContentView: View {
                         }
                     }
                     if rec.recording {
-                        Button("Doorway") { rec.mark("doorway") }
-                            .frame(maxWidth: .infinity, minHeight: 40).background(.yellow).foregroundColor(.black).cornerRadius(8)
+                        HStack {
+                            Button("Doorway") { rec.mark("doorway") }
+                                .frame(maxWidth: .infinity, minHeight: 40).background(.yellow).foregroundColor(.black).cornerRadius(8)
+                            Button { rec.tag(); tagging = true } label: { Label("Tag", systemImage: "scope") }
+                                .frame(maxWidth: .infinity, minHeight: 40).background(.mint).foregroundColor(.black).cornerRadius(8)
+                        }
                     }
                     Button(rec.recording ? "Stop" : "Start") { rec.recording ? rec.stop() : rec.start() }
                         .font(.largeTitle.bold()).frame(maxWidth: .infinity, minHeight: 80)
                         .background(rec.recording ? Color.red : Color.green).foregroundColor(.white).cornerRadius(16)
                     if let zip = rec.zip, !rec.recording {
                         HStack {
-                            Button { rec.reviewing = true } label: { Label("Fix zones", systemImage: "slider.horizontal.below.rectangle") }
+                            Button { rec.reviewing = true } label: { Label("Zones & tags", systemImage: "slider.horizontal.below.rectangle") }
                                 .frame(maxWidth: .infinity, minHeight: 44).background(.white).cornerRadius(8)
                             ShareLink(item: zip) { Label("Share / AirDrop", systemImage: "square.and.arrow.up") }
                                 .frame(maxWidth: .infinity, minHeight: 44).background(.white).cornerRadius(8)
@@ -83,26 +106,189 @@ struct ContentView: View {
                         Button { key.isEmpty ? settings = true : rec.upload(key: key) } label: {
                             Label(key.isEmpty ? "Upload — add your link in ⚙️ first" : "Upload", systemImage: "icloud.and.arrow.up")
                         }
-                        .frame(maxWidth: .infinity, minHeight: 44).background(.white).cornerRadius(8)
+                        .frame(maxWidth: .infinity, minHeight: 44).background(.white).cornerRadius(8).disabled(rec.uploading)
                     }
                     if !rec.status.isEmpty {
                         Text(rec.status).font(.callout).padding(6).background(.black.opacity(0.6)).foregroundColor(.white).cornerRadius(6)
                     }
+                    if let b = rec.build, !rec.recording { house(b) }
                 }
                 .padding()
             }
+            .overlay { if rec.scoring { ScoreCard(rec: rec) } }
             .onAppear { rec.run(); rec.veil.isEnabled = veil }
             .onChange(of: veil) { rec.veil.isEnabled = $0 }
-            .sheet(isPresented: $settings) { Settings(zones: $zones, key: $key, veil: $veil) }
+            .sheet(isPresented: $settings) { Settings(zones: $zones, key: $key, veil: $veil, tagLabels: $tagLabels) }
             .sheet(isPresented: $sessions) { Sessions(rec: rec) }
+            .sheet(isPresented: $tagging) { LabelGrid(labels: Self.items(tagLabels)) { rec.label($0); tagging = false } }
             .fullScreenCover(isPresented: $rec.reviewing) {
-                Review(dir: rec.dir, zones: zoneList) { rec.reviewing = false; rec.save($0) }
+                Review(dir: rec.dir, zones: Self.items(zones), labels: Self.items(tagLabels)) { rec.reviewing = false; rec.save($0, $1) }
             }
         }
     }
 
-    var zoneList: [String] {
-        zones.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    var nudge: String? {
+        guard rec.recording else { return nil }
+        if rec.lowTilted { return "Camera straight ahead, not at the floor — like the duck's eyes" }
+        if rec.lowFast { return "Slower — hold still a second in each direction" }
+        if rec.sinceZone >= 8 { return "New room? Tap its name" }
+        if rec.walls[rec.room, default: 0] >= 25 && rec.sectors[rec.room, default: []].count < 4 { return "Now go low ⬇︎ duck height" }
+        return nil
+    }
+
+    var checklist: some View {
+        let walls = rec.walls[rec.room, default: 0], low = rec.sectors[rec.room, default: []]
+        let tags = rec.tags.filter { $0.room == rec.room }.count
+        let tip = walls < 25 ? "Sweep every wall at chest height"
+            : low.count < 8 ? "Go down to duck height: phone below your knee (under 60 cm), camera level, turn slowly all the way round"
+            : tags < 3 ? "Aim the crosshair at big things that never move (fridge, oven, sofa, bed, toilet, TV) and tap Tag"
+            : "\(rec.room) done: next zone"
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 14) {
+                Label("Walls \(min(Int(walls), 25))/25 s", systemImage: walls >= 25 ? "checkmark.circle.fill" : "circle")
+                HStack(spacing: 5) {
+                    ZStack {
+                        ForEach(0..<8) { k in
+                            Circle().trim(from: CGFloat(k) / 8 + 0.012, to: CGFloat(k + 1) / 8 - 0.012)
+                                .stroke(low.contains(k) ? Color.green : k == rec.facing ? Color.yellow : Color.white.opacity(0.35), lineWidth: 4)
+                        }
+                    }
+                    .frame(width: 20, height: 20)
+                    Text("Low \(low.count)/8")
+                }
+                Label("Tags \(tags)/3", systemImage: tags >= 3 ? "checkmark.circle.fill" : "circle")
+            }
+            .font(.subheadline.bold().monospacedDigit())
+            Text(tip).font(.caption)
+        }
+        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+        .background(.black.opacity(0.5)).foregroundColor(.white).cornerRadius(10)
+    }
+
+    /// The server's build result for this session: rooms, counts, curator warnings and links to the web views.
+    func house(_ b: [String: Any]) -> some View {
+        let r = b["report"] as? [String: Any] ?? [:], curate = r["curate"] as? [String: Any]
+        let n = { (v: Any?) in (v as? Int).map(String.init) ?? (v as? [Any]).map { String($0.count) } ?? "–" }
+        let spaces = (r["spaces"] as? [String: [String: Any]] ?? [:]).sorted { $0.key < $1.key }
+        let state = b["state"] as? String
+        let link = { (path: String) -> URL in
+            var c = URLComponents(string: "https://game.adtomic.co" + path)!
+            c.queryItems = [.init(name: "s", value: rec.sessionID), .init(name: "k", value: key)]
+            return c.url!
+        }
+        return VStack(alignment: .leading, spacing: 4) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(state == "done" ? "House built" : state == "failed" ? "Build failed" : "Still building on the server").font(.headline)
+                    if state == "failed" { Text(String((b["log"] as? String ?? "").suffix(400))).font(.caption.monospaced()) }
+                    ForEach(spaces, id: \.key) { name, s in
+                        Text(String(format: "%@  %.1f × %.1f m · %.0f m²", name, s["w_m"] as? Double ?? 0, s["l_m"] as? Double ?? 0, s["area_m2"] as? Double ?? 0))
+                    }
+                    if state == "done" {
+                        Text("Duck-height frames \(n(r["frames_low"])) · doors \(n(r["doors"])) · objects \(n(r["objects"]))")
+                        Text("Landmarks \(n(r["landmarks"] ?? b["landmarks"])) · candidates \(n(r["landmark_candidates"] ?? b["candidates"]))")
+                        if let by = curate?["by"] as? String { Text("Curated by \(by)").font(.caption) }
+                        ForEach((curate?["warnings"] as? [String] ?? []).prefix(3), id: \.self) { Text("⚠︎ " + $0).font(.caption).foregroundColor(.orange) }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: 220).fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Link(destination: link("/lidar")) { Label("Open results", systemImage: "safari") }
+                    .frame(maxWidth: .infinity, minHeight: 40).background(.white).foregroundColor(.blue).cornerRadius(8)
+                Link(destination: link("/lidar/3d")) { Label("View in 3D", systemImage: "cube") }
+                    .frame(maxWidth: .infinity, minHeight: 40).background(.white).foregroundColor(.blue).cornerRadius(8)
+            }
+        }
+        .font(.callout.monospacedDigit()).padding(8).background(.black.opacity(0.6)).foregroundColor(.white).cornerRadius(10)
+    }
+
+    static func items(_ list: String) -> [String] {
+        list.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+    }
+}
+
+/// Shown on Stop: how complete the recording is, per zone, before the review.
+struct ScoreCard: View {
+    @ObservedObject var rec: Recorder
+    typealias Row = (mark: Color, title: String, tip: String)
+
+    var body: some View {
+        let zones = rec.walked.keys.sorted(), total = rec.walked.values.reduce(0, +)
+        let short = zones.filter { rec.walked[$0, default: 0] < 4 }
+        let zoneRow: Row = zones.count == 1 && total > 15 ? (.red, "1 zone for \(Int(total)) m walked", "Rooms will merge into one: fix zones in the review")
+            : !short.isEmpty ? (.orange, "\(zones.count) zones, \(short.joined(separator: ", ")) under 4 m", "Check those zones in the review")
+            : (.green, "\(zones.count) zones · \(Int(total)) m walked", "Each room has its own zone")
+        let low: [Row] = zones.map { z in
+            let k = rec.sectors[z]?.count ?? 0
+            return (k >= 6 ? .green : k >= 3 ? .orange : .red, "\(z) \(k)/8 directions", k >= 6 ? "Duck height covered" : "Few low views: the duck may get lost here")
+        }
+        let tags: [Row] = zones.map { z in
+            let k = rec.tags.filter { $0.room == z }.count
+            return (k >= 2 ? .green : .orange, "\(z) \(k) tag\(k == 1 ? "" : "s")", k >= 2 ? "Enough fixed objects" : "Tag 2+ things that never move")
+        }
+        let mb = rec.bytes / 1_000_000, d = Int(rec.duration)
+        let size: Row = (mb > 500 ? .red : .green, String(format: "%d:%02d · %d frames · %d MB", d / 60, d % 60, rec.frames, mb),
+                         mb > 500 ? "Over 500 MB: the upload limit is 600 MB" : "Size is fine")
+        let red = (low + [size]).filter { $0.mark == .red }.map(\.title)
+        let warn = ([zoneRow] + low + tags).filter { $0.mark != .green }.map(\.title)
+        let overall = !red.isEmpty ? "Consider recording again: " + red.prefix(3).joined(separator: ", ")
+            : !warn.isEmpty ? "Usable, but " + warn.prefix(3).joined(separator: ", ") : "Good to upload"
+        return VStack(alignment: .leading, spacing: 12) {
+            Text("Recording check").font(.title2.bold())
+            Text(overall).font(.headline).foregroundColor(!red.isEmpty ? .red : !warn.isEmpty ? .orange : .green)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 8) {
+                    section("Zones", [zoneRow])
+                    section("Duck-height pass", low)
+                    section("Tags", tags)
+                    section("Length", [size])
+                }
+            }
+            HStack {
+                Button("Skip") { rec.scoring = false; rec.save(nil, nil) }
+                    .frame(maxWidth: .infinity, minHeight: 48).background(.gray.opacity(0.4)).cornerRadius(10)
+                Button("Review zones & tags") { rec.scoring = false; rec.reviewing = true }.font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 48).background(.green).cornerRadius(10)
+            }
+        }
+        .foregroundColor(.white).padding()
+        .background(Color.black.ignoresSafeArea())
+    }
+
+    func section(_ name: String, _ rows: [Row]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(name.uppercased()).font(.caption.bold()).foregroundColor(.gray)
+            ForEach(rows.indices, id: \.self) { i in
+                HStack(alignment: .firstTextBaseline) {
+                    Circle().fill(rows[i].mark).frame(width: 12, height: 12)
+                    VStack(alignment: .leading) {
+                        Text(rows[i].title).font(.body.bold().monospacedDigit())
+                        Text(rows[i].tip).font(.caption).foregroundColor(.white.opacity(0.75))
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct LabelGrid: View {
+    let labels: [String]
+    let pick: (String?) -> Void
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Text("What is it?").font(.headline)
+            LazyVGrid(columns: [GridItem(), GridItem(), GridItem()]) {
+                ForEach(labels, id: \.self) { l in
+                    Button(l) { pick(l) }
+                        .frame(maxWidth: .infinity, minHeight: 44).background(.blue).foregroundColor(.white).cornerRadius(8)
+                }
+            }
+            Button("Cancel") { pick(nil) }.frame(maxWidth: .infinity, minHeight: 44)
+        }
+        .padding().presentationDetents([.medium]).interactiveDismissDisabled()
     }
 }
 
@@ -110,6 +296,7 @@ struct Settings: View {
     @Binding var zones: String
     @Binding var key: String
     @Binding var veil: Bool
+    @Binding var tagLabels: String
     @State var link = ""
     @Environment(\.dismiss) var dismiss
 
@@ -130,6 +317,9 @@ struct Settings: View {
                 Section(header: Text("Zones (comma-separated)")) {
                     TextField("Kitchen,Living room,…", text: $zones)
                 }
+                Section(header: Text("Tag labels (comma-separated)")) {
+                    TextField("Fridge,Oven,…", text: $tagLabels)
+                }
                 Section(footer: Text("Dark = not scanned yet; surfaces light up once the LiDAR mesh covers them.")) {
                     Toggle("Coverage veil", isOn: $veil)
                 }
@@ -143,13 +333,14 @@ struct Settings: View {
 
 struct Sessions: View {
     @ObservedObject var rec: Recorder
+    @AppStorage("apiKey") var key = ""
     @State var ids: [String] = []
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
         NavigationView {
             List {
-                ForEach(ids, id: \.self) { id in Button(id) { rec.open(id); dismiss() } }
+                ForEach(ids, id: \.self) { id in Button(id) { rec.open(id); if !key.isEmpty { rec.poll(key: key, once: true) }; dismiss() } }
                     .onDelete { $0.forEach { rec.delete(ids[$0]) }; ids = rec.sessions() }
             }
             .overlay { if ids.isEmpty { Text("No recordings yet").foregroundColor(.secondary) } }
@@ -161,11 +352,17 @@ struct Sessions: View {
 }
 
 /// Fix the zones after recording: scrub the strip or the thumbnails, tap a zone to relabel from here to the next
-/// change (or the selected range).
+/// change (or the selected range). Then, if there are tags, check their labels.
 struct Review: View {
     let dir: URL
     let zones: [String]
-    let done: ([String]?) -> Void
+    let labels: [String]
+    let done: ([String]?, [Tag]?) -> Void
+    @State var tags: [Tag] = []
+    @State var crops: [Int: UIImage] = [:]
+    @State var tagStep = false
+    @State var keep: [String]?
+    @State var editing: Tag?
     @State var rooms: [String] = []
     @State var orig: [String] = []
     @State var thumbs: [UIImage?] = []
@@ -239,15 +436,54 @@ struct Review: View {
             HStack {
                 Button("Undo all") { rooms = orig; anchor = nil }
                     .frame(maxWidth: .infinity, minHeight: 48).background(.gray.opacity(0.4)).foregroundColor(.white).cornerRadius(10)
-                Button("Skip") { done(nil) }
+                Button("Skip") { if tags.isEmpty { done(nil, nil) } else { keep = nil; tagStep = true } }
                     .frame(maxWidth: .infinity, minHeight: 48).background(.gray.opacity(0.4)).foregroundColor(.white).cornerRadius(10)
-                Button("Save") { done(rooms) }.font(.headline)
+                Button(tags.isEmpty ? "Save" : "Next") { if tags.isEmpty { done(rooms, []) } else { keep = rooms; tagStep = true } }.font(.headline)
                     .frame(maxWidth: .infinity, minHeight: 48).background(.green).foregroundColor(.white).cornerRadius(10)
             }
         }
         .padding()
         .background(Color.black.ignoresSafeArea())
+        .overlay { if tagStep { tagList } }
+        .sheet(item: $editing) { t in
+            LabelGrid(labels: labels) { l in
+                if let l, let k = tags.firstIndex(where: { $0.id == t.id }) { tags[k].label = l }
+                editing = nil
+            }
+        }
         .task { await load() }
+    }
+
+    var tagList: some View {
+        VStack(spacing: 10) {
+            Text("Tags: tap to change the label, swipe to delete").font(.headline).foregroundColor(.white)
+            List {
+                ForEach(tags) { t in
+                    HStack(spacing: 12) {
+                        if let img = crops[t.i] { Image(uiImage: img).resizable().scaledToFill().frame(width: 64, height: 64).clipped().cornerRadius(6) }
+                        else { Color.gray.frame(width: 64, height: 64).cornerRadius(6) }
+                        VStack(alignment: .leading) {
+                            Text(t.label).font(.title3.bold())
+                            Text("\(t.room) · frame \(t.i)").font(.caption).foregroundColor(.secondary)
+                        }
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { editing = t }
+                }
+                .onDelete { tags.remove(atOffsets: $0) }
+            }
+            .listStyle(.plain).environment(\.colorScheme, .dark)
+            .overlay { if tags.isEmpty { Text("No tags left").foregroundColor(.secondary) } }
+            HStack {
+                Button("Back") { tagStep = false }
+                    .frame(maxWidth: .infinity, minHeight: 48).background(.gray.opacity(0.4)).foregroundColor(.white).cornerRadius(10)
+                Button("Save") { done(keep, tags) }.font(.headline)
+                    .frame(maxWidth: .infinity, minHeight: 48).background(.green).foregroundColor(.white).cornerRadius(10)
+            }
+        }
+        .padding()
+        .background(Color.black.ignoresSafeArea())
     }
 
     func color(_ zone: String) -> Color {
@@ -265,8 +501,22 @@ struct Review: View {
     }
 
     func load() async {
-        let text = (try? String(contentsOf: dir.appendingPathComponent("frames.jsonl"))) ?? ""
-        let lines = text.split(separator: "\n").compactMap { (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any] }
+        let json = { (file: String) in
+            ((try? String(contentsOf: dir.appendingPathComponent(file))) ?? "").split(separator: "\n")
+                .compactMap { (try? JSONSerialization.jsonObject(with: Data($0.utf8))) as? [String: Any] }
+        }
+        let saved = (try? JSONSerialization.jsonObject(with: Data(contentsOf: dir.appendingPathComponent("labels.json")))) as? [String: Any]
+        tags = ((saved?["tags"] as? [[String: Any]]) ?? json("events.jsonl").filter { $0["event"] as? String == "tag" }).compactMap { Tag($0) }
+        for t in tags {
+            let path = dir.appendingPathComponent(String(format: "rgb/%06d.jpg", t.i)).path, uv = t.uv
+            let cg = await Task.detached { () -> CGImage? in
+                guard let img = UIImage(contentsOfFile: path)?.cgImage, uv.count == 2 else { return nil }
+                let w = Double(img.width), h = Double(img.height), s = h / 2
+                return img.cropping(to: CGRect(x: min(max(uv[0] * w - s / 2, 0), w - s), y: min(max(uv[1] * h - s / 2, 0), h - s), width: s, height: s))
+            }.value
+            crops[t.i] = cg.map { UIImage(cgImage: $0, scale: 1, orientation: .right) }
+        }
+        let lines = json("frames.jsonl")
         rooms = lines.map { $0["room"] as? String ?? "" }
         orig = rooms
         thumbs = Array(repeating: nil, count: (lines.count + 3) / 4)

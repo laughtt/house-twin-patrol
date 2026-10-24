@@ -1,0 +1,49 @@
+{
+ "_note": "Hand-checked by looking at each crop (the official ARKitScenes boxes label whole units, e.g. the cabinet a microwave sits in, so nearest-box matching was wrong). 'also' = other names that are fair.",
+ "c0": {
+  "label": "tv",
+  "keep": true
+ },
+ "c1": {
+  "label": "cabinet",
+  "keep": true,
+  "also": [
+   "fridge",
+   "wardrobe"
+  ]
+ },
+ "c2": {
+  "label": "not a landmark",
+  "keep": false,
+  "also": [
+   "bag"
+  ]
+ },
+ "c3": {
+  "label": "bed",
+  "keep": true
+ },
+ "c4": {
+  "label": "kitchen counter",
+  "keep": true,
+  "also": [
+   "shelf"
+  ]
+ },
+ "c5": {
+  "label": "microwave",
+  "keep": true
+ },
+ "c6": {
+  "label": "tv",
+  "keep": true
+ },
+ "c7": {
+  "label": "sink",
+  "keep": true
+ },
+ "c8": {
+  "label": "chair",
+  "keep": true
+ }
+}

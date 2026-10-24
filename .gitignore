@@ -9,3 +9,4 @@ lidar/app/build/
 __pycache__/
 .DS_Store
 xcuserdata/
+.env

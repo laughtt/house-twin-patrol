@@ -1,4 +1,7 @@
-"""OpenCV 5 on the duck camera: ArUco markers → both IPPE solutions of the camera pose in each marker's frame."""
+"""OpenCV 5 on the duck camera: ArUco markers, recognised objects (bearing + range) and the room's colour fingerprint."""
+import sys
+from pathlib import Path
+
 import cv2 as cv
 import numpy as np
 
@@ -18,3 +21,27 @@ def markers(gray, K, sizes):
         out.append({"id": int(i), "corners": c[0],
                     "solutions": [(cv.Rodrigues(r)[0], t.ravel(), float(e)) for r, t, e in zip(rvecs, tvecs, np.ravel(errs))]})
     return out
+
+
+def objects(bgr, K, eye_h, min_score=0.4):
+    """YOLOX (the scan's detector) on an upright, level camera → [{cls, score, bearing (rad, + = left), range (m) or
+    None}]. Range comes from where the box meets the floor, so only when its bottom edge is in view."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "service"))
+    from v0.scan import LANDMARK, detect
+    h = bgr.shape[0]
+    out = []
+    for cls, score, (x0, y0, x1, y1) in detect(bgr, classes=LANDMARK):
+        if score < min_score:
+            continue
+        below = np.arctan2(y1 - K[1, 2], K[1, 1])
+        rng = float(eye_h / np.tan(below)) if y1 < h - 3 and below > np.radians(3) else None
+        out.append({"cls": cls, "score": float(score), "bearing": float(np.arctan2(K[0, 2] - (x0 + x1) / 2, K[0, 0])), "range": rng})
+    return out
+
+
+def colour_hist(bgr):
+    """Hue × saturation histogram (16 × 8) of the well-lit pixels, summing to 1: a room's colour fingerprint."""
+    hsv = cv.cvtColor(bgr, cv.COLOR_BGR2HSV)
+    mask = cv.inRange(hsv, (0, 0, 40), (180, 255, 255))
+    hist = cv.calcHist([hsv], [0, 1], mask, [16, 8], [0, 180, 0, 256]).ravel()
+    return hist / max(hist.sum(), 1)

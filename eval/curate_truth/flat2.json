@@ -1,0 +1,127 @@
+{
+ "_note": "Hand-checked by looking at each crop (evaluation answer key, not used by the pipeline). 'also' = other names that are fair.",
+ "c0": {
+  "label": "armchair",
+  "keep": true,
+  "also": [
+   "chair"
+  ]
+ },
+ "c1": {
+  "label": "bed",
+  "keep": true
+ },
+ "c2": {
+  "label": "office chair",
+  "keep": true,
+  "also": [
+   "chair"
+  ]
+ },
+ "c3": {
+  "label": "fridge",
+  "keep": true
+ },
+ "c4": {
+  "label": "bed",
+  "keep": true
+ },
+ "c5": {
+  "label": "sofa",
+  "keep": true
+ },
+ "c6": {
+  "label": "chair",
+  "keep": true
+ },
+ "c7": {
+  "label": "sink",
+  "keep": true
+ },
+ "c8": {
+  "label": "tv",
+  "keep": true
+ },
+ "c9": {
+  "label": "kitchen counter",
+  "keep": true,
+  "also": [
+   "dining table"
+  ]
+ },
+ "c10": {
+  "label": "desk",
+  "keep": true
+ },
+ "c11": {
+  "label": "bathtub",
+  "keep": true
+ },
+ "c12": {
+  "label": "potted plant",
+  "keep": true
+ },
+ "c13": {
+  "label": "desk",
+  "keep": true,
+  "also": [
+   "dining table"
+  ]
+ },
+ "c14": {
+  "label": "vase",
+  "keep": true,
+  "also": [
+   "potted plant"
+  ]
+ },
+ "c15": {
+  "label": "chair",
+  "keep": true
+ },
+ "c16": {
+  "label": "sink",
+  "keep": true
+ },
+ "c17": {
+  "label": "not a landmark",
+  "keep": false
+ },
+ "c18": {
+  "label": "shelf",
+  "keep": true,
+  "also": [
+   "cabinet",
+   "kitchen counter"
+  ]
+ },
+ "c19": {
+  "label": "potted plant",
+  "keep": true
+ },
+ "c20": {
+  "label": "potted plant",
+  "keep": true
+ },
+ "c21": {
+  "label": "stove",
+  "keep": true,
+  "also": [
+   "kitchen counter"
+  ]
+ },
+ "c22": {
+  "label": "potted plant",
+  "keep": true,
+  "also": [
+   "vase"
+  ]
+ },
+ "c23": {
+  "label": "shelf",
+  "keep": true,
+  "also": [
+   "cabinet"
+  ]
+ }
+}

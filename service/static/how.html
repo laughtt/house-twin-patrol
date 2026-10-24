@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Walk to Map</title>
+<style>
+:root{--bg:#f6f5f1;--fg:#1c1b19;--muted:#6b6862;--card:#fff;--line:#e2dfd8;--accent:#1f6feb;--ok:#1a7f37;--warn:#b35900;--bad:#c62828;--chip:#eef2ff;--think:#f3f0ff}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121211;--fg:#eceae4;--muted:#9a978f;--card:#1d1c1a;--line:#33312d;--accent:#3b82f6;--ok:#2ea043;--warn:#d9822b;--bad:#e5484d;--chip:#1e2433;--think:#221f2e}}
+:root[data-theme="dark"]{--bg:#121211;--fg:#eceae4;--muted:#9a978f;--card:#1d1c1a;--line:#33312d;--accent:#3b82f6;--ok:#2ea043;--warn:#d9822b;--bad:#e5484d;--chip:#1e2433;--think:#221f2e}
+*{box-sizing:border-box}
+html,body{overflow-x:hidden}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,sans-serif}
+main{max-width:860px;margin:0 auto;padding:16px}
+h1{font-size:1.5rem;margin:8px 0 4px}
+h2{font-size:1.15rem;margin:0}
+.muted{color:var(--muted);font-size:.9rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px;margin:14px 0;min-width:0;overflow-wrap:anywhere}
+.flow{display:flex;flex-wrap:wrap;gap:6px;margin:12px 0}
+.flow a{background:var(--chip);color:var(--fg);text-decoration:none;border-radius:999px;padding:5px 11px;font-size:.85rem;border:1px solid var(--line)}
+.flow a b{color:var(--accent)}
+.head{display:flex;justify-content:space-between;gap:10px;align-items:baseline;flex-wrap:wrap}
+.num{display:inline-block;background:var(--accent);color:#fff;border-radius:50%;width:26px;height:26px;text-align:center;line-height:26px;font-weight:700;margin-right:8px;font-size:.85rem}
+code{font-size:.82rem;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.io{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;margin:10px 0;font-size:.9rem}
+.io div{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px}
+.io span{color:var(--muted)}
+.stats{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.stat{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:6px 10px;min-width:90px}
+.stat b{display:block;font-size:1.15rem}
+.stat span{font-size:.78rem;color:var(--muted)}
+details{background:var(--think);border-radius:10px;padding:8px 12px;margin:8px 0}
+details summary{cursor:pointer;font-weight:600}
+.lesson{border-left:4px solid var(--warn);padding:6px 10px;margin:8px 0;background:var(--bg);border-radius:0 8px 8px 0;font-size:.92rem}
+.lesson b{color:var(--warn)}
+img.pic{width:100%;border-radius:10px;border:1px solid var(--line);background:var(--bg);margin-top:6px}
+canvas{width:100%;height:170px;display:block;background:var(--bg);border:1px solid var(--line);border-radius:10px;margin-top:6px}
+.thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(80px,1fr));gap:6px;margin-top:6px}
+.thumbs img{width:100%;aspect-ratio:3/4;object-fit:cover;border-radius:6px;border:1px solid var(--line);background:var(--line)}
+table{border-collapse:collapse;width:100%;font-size:.86rem}
+td,th{border-bottom:1px solid var(--line);padding:5px 4px;text-align:left;vertical-align:top}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+select,button{font:inherit;padding:8px 10px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:var(--fg)}
+a.btn{display:inline-block;background:var(--accent);color:#fff;text-decoration:none;border-radius:10px;padding:9px 14px;font-weight:600;margin-top:8px}
+.legend{font-size:.8rem;color:var(--muted);margin-top:4px}
+@media (max-width:560px){.io{grid-template-columns:1fr}.io span{display:none}}
+</style>
+</head>
+<body>
+<main>
+<h1>From a phone walk to a house map</h1>
+<p class="muted">Steps 1 and 2 of House Twin Patrol, module by module. Each card shows what the module does, what goes in and out,
+the real result from your scan, the decision behind it, and what your scan taught us. Everything runs by itself: the
+only AI call is a small model (Claude Haiku) that checks the landmark list.</p>
+<div class="card head"><select id="sid" aria-label="Scan" onchange="load()" style="flex:1;min-width:0"></select><span class="muted" id="sum"></span></div>
+<nav class="flow" id="flow"></nav>
+<div id="out"><div class="card muted">Loading…</div></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const store = {get: k => { try { return JSON.parse(localStorage.getItem(k)) } catch { return null } },
+               set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }};
+const q = new URLSearchParams(location.search);
+if (q.get('k')) store.set('key', q.get('k'));
+const KEY = q.get('k') || store.get('key') || '';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
+const api = path => fetch(path, {headers: {'X-API-Key': KEY}}).then(r => r.ok ? r : Promise.reject(new Error(r.status)));
+const sid = () => encodeURIComponent($('sid').value);
+const blob = async path => URL.createObjectURL(await (await api(path)).blob());
+const stat = (v, l) => `<div class="stat"><b>${esc(v)}</b><span>${esc(l)}</span></div>`;
+const io = (i, o) => `<div class="io"><div><span>In:</span> ${i}</div><span>→</span><div><span>Out:</span> ${o}</div></div>`;
+const think = (t, open) => `<details${open ? ' open' : ''}><summary>Thinking: why it works this way</summary>${t}</details>`;
+const lesson = t => `<div class="lesson"><b>Learned from your scans:</b> ${t}</div>`;
+const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#a855f7', '#ef4444', '#14b8a6', '#eab308'];
+
+const MODULES = [
+  ['capture', 'Capture', 'lidar/app (iPhone, Swift + ARKit)'], ['upload', 'Upload', 'lidar/app → service/app.py'],
+  ['read', 'Read the scan', 'twin/scan_io.py'], ['fuse', 'Fuse in 3D', 'twin/fuse.py (OpenCV 5 TSDF)'],
+  ['floor', 'Local floor', 'twin/fuse.py ground_map'], ['plan', 'Floor plan', 'twin/floorplan.py'],
+  ['landmarks', 'Landmarks', 'twin/landmarks.py (YOLOX via cv.dnn)'], ['curate', 'Haiku check', 'twin/curate.py (Bedrock)'],
+  ['furniture', 'Furniture', 'twin/furniture.py'], ['occupancy', 'Occupancy & 3D', 'twin/house.py, /lidar/3d']];
+
+async function start() {
+  if (!KEY) return $('out').innerHTML = '<div class="card bad">Missing access key: open the full link once (it ends in ?k=…).</div>';
+  const ids = await (await api('/lidar/sessions')).json();
+  $('sid').innerHTML = ids.map(i => `<option>${esc(i)}</option>`).join('');
+  if (q.get('s') && ids.includes(q.get('s'))) $('sid').value = q.get('s');
+  $('flow').innerHTML = MODULES.map((m, i) => `<a href="#${m[0]}"><b>${i + 1}</b> ${m[1]}</a>`).join('');
+  load();
+}
+
+async function load() {
+  try {
+    const [st, cap] = await Promise.all([(await api(`/lidar/status?session=${sid()}`)).json(), (await api(`/lidar/capture?session=${sid()}`)).json()]);
+    if (st.state !== 'done') return $('out').innerHTML = `<div class="card">This scan is ${esc(st.state)}. Open it again when the house is built.</div>`;
+    render(st, cap);
+  } catch (e) { $('out').innerHTML = `<div class="card bad">${esc(e.message)}</div>`; }
+}
+
+function card(i, body) {
+  const [id, name, file] = MODULES[i];
+  return `<section class="card" id="${id}"><div class="head"><h2><span class="num">${i + 1}</span>${name}</h2><code>${esc(file)}</code></div>${body}</section>`;
+}
+
+function render(st, cap) {
+  const r = st.report, c = st.candidates, f = cap.frames, T = r.timings_s || {};
+  const dur = f.length ? f[f.length - 1].t : 0, low = cap.low_h || 0.75;
+  const withH = f.filter(x => x.h != null), lowF = withH.filter(x => x.h < low), lowLevel = lowF.filter(x => Math.abs(x.pitch) < 25);
+  const zones = [...new Set(f.map(x => x.room))];
+  const zoneTime = zones.map(z => [z, f.filter(x => x.room === z).length * 2 / 4]);  // every 2nd frame at 4 fps
+  const taps = cap.events.filter(e => e.event === 'room').length;
+  const kept = c.filter(x => x.decision.keep && x.decision.mobility !== 'ignore' && !x.merged);
+  const relabelled = c.filter(x => x.source !== 'user' && x.decision.label && x.decision.label.toLowerCase() !== x.label.toLowerCase());
+  const total = Object.values(T).reduce((a, b) => a + b, 0);
+  const space = Object.entries(r.spaces).map(([n, v]) => `${n}: ${v.w_m} × ${v.l_m} m`).join(' · ');
+  $('sum').textContent = `${Math.round(dur / 60)} min walk · ${r.frames} frames · built in ${Math.round(total)} s`;
+
+  const html = [
+    card(0, `<p>You walk through the home with the Twin LiDAR app. Four times a second it saves a colour photo, a LiDAR depth
+      image and where the phone is (ARKit). You tap the room you're in, crouch for a duck-height look in every direction,
+      and tag things that never move.</p>
+      ${io('your walk, zone taps, tags', '<code>frames.jsonl</code> + photos + depth + <code>events.jsonl</code> + <code>labels.json</code>')}
+      <div class="stats">${stat(`${Math.floor(dur / 60)}:${String(Math.round(dur % 60)).padStart(2, '0')}`, 'minutes')}${stat(r.frames, 'frames')}
+        ${stat(cap.mb + ' MB', 'upload')}${stat(zones.length, zones.length === 1 ? 'zone' : 'zones')}${stat(lowF.length * 2, `frames under ${low} m`)}
+        ${stat(lowLevel.length * 2, 'low and level')}${stat(cap.tags.length, 'tags')}</div>
+      <div class="muted">Camera height above the floor under it (dots coloured by zone; shaded = duck height):</div>
+      <canvas id="hchart" aria-label="Camera height over time"></canvas>
+      <div class="muted" style="margin-top:8px">Camera tilt (0° = level like the duck's eyes, −90° = at the floor; shaded = level enough):</div>
+      <canvas id="pchart" aria-label="Camera tilt over time"></canvas>
+      <div class="legend">${zoneTime.map(([z, s], k) => `<span style="color:${COLORS[k % COLORS.length]}">●</span> ${esc(z)} ${Math.round(s)} s`).join(' &nbsp; ')}</div>
+      ${cap.score ? `<div class="muted" style="margin-top:6px">App score card: ${esc(JSON.stringify(cap.score))}</div>` : ''}
+      ${think(`<p>The duck sees the home from 20 cm. A phone at chest height sees over furniture the duck will bump into, so the
+        scan needs a low pass, held level (the duck looks ahead, not down). The app now measures its own height above the floor
+        and its tilt, fills an 8-direction ring per room only when both are right, and tells you when to slow down or lift the camera.</p>`, true)}
+      ${zones.length === 1 && taps <= 1 ? lesson(`no room was tapped, so the whole home is one zone "${esc(zones[0])}". Zones are how the floor plan knows where one room ends: without them there are no interior walls or doors. The app now nudges "New room? Tap its name" after 8 m in one zone.`) : ''}
+      ${lowF.length && lowLevel.length < lowF.length / 2 ? lesson(`most low frames looked at the floor (tilt below −25°), which shows the duck nothing useful. The app's low-pass ring now only counts a direction when the camera is level.`) : ''}
+      ${lesson('the app judged height against the first flat surface it found, sometimes a sofa or table; it now only trusts surfaces ARKit calls floor, and the floor never moves up.')}`),
+    card(1, `<p>Upload sends one zip to the server. The server starts building the house by itself: no person and no Claude
+      Code in the loop.</p>${io('the zip (' + cap.mb + ' MB)', 'a build job: <code>python -m twin build</code>')}
+      ${think('<p>One upload, one automatic build, results on <a href="/lidar">House builds</a> and in the app. A rebuild (after tags or a fix) uses the same zip.</p>')}
+      ${lesson('the upload stalled at 116 MB when the phone locked. The app now keeps the screen on while uploading and shows the build result when it finishes.')}`),
+    card(2, `<p>Opens the zip and checks it: which frames had good tracking, which zone each frame belongs to (your taps or the
+      review), and your tags.</p>${io('the zip', 'frames with poses and zones, tags')}
+      <div class="stats">${stat(r.frames_used + ' / ' + r.frames, 'frames with good tracking')}${stat(r.tags, 'tags')}${stat(zones.length, 'zones')}</div>
+      ${think('<p>Everything after this works on one format, whatever phone made it. Bad tags (missing frame, crosshair outside the picture, empty label) are dropped here: our red-team tests sent all of those.</p>')}`),
+    card(3, `<p>Every depth image is fused into one 3D model (OpenCV 5's TSDF volume, 2.5 cm), and each point keeps its colour
+      and the zone it was seen from. Gravity from ARKit says which way is up; the walls' directions set the axes.</p>
+      ${io('frames: depth + photo + pose', 'a voxel grid and a clean surface (cloud)')}
+      <div class="stats">${stat((r.voxels / 1e6).toFixed(2) + ' M', 'voxels')}${stat((r.tsdf_points / 1e3).toFixed(0) + ' k', 'surface points')}
+        ${stat(r.manhattan_deg + '°', 'wall direction')}${stat((T.fuse_s || 0).toFixed(0) + ' s', 'time')}</div>
+      <div class="thumbs" id="thumbs"></div>
+      ${think('<p>A TSDF averages every view of a surface, so a wall seen 200 times becomes one thin, clean surface. Noise points that appear only in one depth image disappear: that is why the duck\'s map (card 10) comes from this surface, not the raw points.</p>')}`),
+    card(4, `<p>Finds the floor under every 50 cm of the home, so every height afterwards means "above the floor right
+      here".</p>${io('upward-facing surfaces', 'a floor-height tile map')}<img class="pic" id="floorpic" alt="Floor height tiles">
+      <div class="legend">Yellow = higher floor, purple = lower, around the usual level.</div>
+      ${think('<p>Before, the floor was one number: the lowest big flat layer. Tiles under a bed or sofa (no floor in view) take the average of their neighbours.</p>')}
+      ${lesson('your flat has two floor levels, the main floor 13 cm above a lower area of about 30 m². With one floor height, rugs became 15 cm "seats" and 35 % of your walk landed inside furniture. With the tiles it is 13 %, and 142 frames count as low instead of 23.')}`),
+    card(5, `<p>Draws the rooms: the floor you walked on, grown outward until walls and glass stop it; zones split it into
+      rooms; doors are the narrow openings between zones.</p>${io('voxels + your path + zones', 'rooms, walls, doors (house.json)')}
+      <div class="stats">${stat(space, 'spaces')}${stat(r.doors, 'doors')}${stat(r.walls, 'walls')}${stat(Object.keys(r.zones).length, 'zones')}</div>
+      <img class="pic" id="toppic" alt="Floor plan from above">
+      <div class="legend">Black lines: walls · red boxes: furniture · orange stars: landmarks · black path: duck-height frames.</div>
+      ${think('<p>Glass doors and windows let LiDAR see the patio, so straight wall lines with gaps up to 1.5 m are sealed unless you walked through. A door needs a wall on both sides, so an edge of unseen floor is not mistaken for one.</p>')}
+      ${Object.keys(r.zones).length === 1 ? lesson('one zone → one big room with no interior walls in house.json. The duck\'s tracker no longer depends on this (card 10 uses the real surfaces), but the plan and the simulator do. Next: split rooms automatically at doorways when no zones were tapped.') : ''}`),
+    card(6, `<p>Finds things the duck can recognise: the object detector (YOLOX, run with OpenCV's dnn module) on every
+      2nd photo, turned upright; each box is lifted into 3D with the LiDAR depth; boxes of the same object seen from
+      different places are merged. Your tags name a candidate or add one.</p>
+      ${io('photos + depth + tags', `${r.landmark_candidates} candidates`)}
+      <div class="stats">${stat(r.landmark_candidates, 'candidates')}${stat(c.filter(x => x.source === 'user').length, 'from your tags')}
+        ${stat(c.reduce((a, x) => a + x.low_views, 0), 'seen from low')}${stat((T.landmarks_s || 0).toFixed(0) + ' s', 'time')}</div>
+      ${think('<p>The detector knows about 80 everyday classes. Not all matter: a person or a cup is never a landmark. Things seen through a window (outside every room) are dropped here.</p>')}`),
+    card(7, `<p>A small model, <b>${esc(r.curate.by)}</b>, looks at one picture of each candidate with its size and room, and
+      decides: keep or drop, the right name, duplicates to merge, and how often it moves. That sets how much the duck trusts it.</p>
+      ${io(`${r.landmark_candidates} candidates + pictures`, `${r.landmarks} landmarks with a trust level`)}
+      <div class="stats">${stat(r.curate.answered || '-', 'answered')}${stat(kept.length, 'kept')}${stat(relabelled.length, 'renamed')}${stat((T.curate_s || 0).toFixed(0) + ' s', 'time')}</div>
+      <table><tr><th>Detector said</th><th>Haiku decided</th><th>Trust</th><th>Why</th></tr>
+      ${c.map(x => `<tr><td>${esc(x.cls || x.label)}</td><td>${esc(x.decision.label)}</td>
+        <td class="${x.decision.keep && x.decision.mobility !== 'ignore' ? 'ok' : 'muted'}">${x.decision.keep ? esc(x.decision.mobility) : (x.decision.merge_into ? 'merged' : 'dropped')}</td>
+        <td class="muted">${esc(x.decision.reason)}</td></tr>`).join('')}</table>
+      ${(r.curate.warnings || []).length ? `<div class="muted" style="margin-top:6px">Haiku's warnings: ${r.curate.warnings.slice(0, 3).map(esc).join(' · ')}</div>` : ''}
+      ${think('<p>Fixed things (fridge, sink, bathtub) count fully; rarely moved things (sofa, bed, TV) 0.6; often moved things (chairs, plants) 0.2; people and cups never. Every answer is checked field by field; a bad answer falls back to plain lists in config.toml, and your own tags can never be dropped by the model. Without AWS access the lists decide alone.</p>', true)}
+      ${lesson('Haiku 5.5 thinks before answering, and on your 26 candidates it ran out of room mid-answer. It is now asked for the report directly: 24 of 24 answered in about 15 s.')}`),
+    card(8, `<p>What stands in the duck's way: a map of the top height of everything below 1.2 m, cut into seats (~0.45 m),
+      tables (~0.75 m) and counters (~0.95 m), each layer as rectangles named after the nearest landmark.</p>
+      ${io('voxels above the local floor', `${r.objects} furniture boxes`)}
+      <div class="stats">${stat(r.objects, 'boxes')}${stat((T.objects_s || 0).toFixed(1) + ' s', 'time')}</div>
+      ${think('<p>Anything under 20 cm (rugs, thresholds, floor bumps) is not furniture. Tables and chairs become legs in the simulator, so the duck can walk under them like the real thing.</p>')}`),
+    card(9, `<p>The clean 3D surface, saved as a 3D grid (5 cm cells, 10 cm height bands). The duck's tracker checks its
+      distance sensor against the real walls and furniture at its own height, whatever the floor plan got wrong.</p>
+      ${io('the fused surface', '<code>occupancy.npz</code>, <code>cloud.bin</code>, house.json')}
+      <img class="pic" id="occpic" alt="What a 20 cm high sensor can hit">
+      <div class="legend">Cyan: surfaces 10–40 cm high (what the duck's sensor hits) · grey: any height.</div>
+      <a class="btn" href="/lidar/3d?s=${sid()}">View your home in 3D</a>
+      <a class="btn" href="/lidar/mission?s=${sid()}">Next: the duck's patrol (steps 3–4)</a>
+      ${think('<p>On your flat, the duck following your route in the simulated twin finds itself in about 20 s with no stickers and stays within 0.3 m about 89 % of the time (3.5 cm typical). The rest happens in the big open middle, where its 4 m sensor sees nothing and no landmark is in view.</p>', true)}`),
+  ];
+  $('out').innerHTML = html.join('') + `<div class="card"><h2>What the duck gets</h2><p>One <code>house.json</code>: ${esc(space)}, ${r.walls} walls,
+    ${r.doors} doors, ${r.objects} furniture boxes, ${r.landmarks} landmarks with trust levels, a colour fingerprint per zone, and
+    the occupancy grid. Step 3 turns it into the simulator scene; step 4 is the duck finding its way.</p></div>`;
+  chart('hchart', f, x => x.h, 0, Math.max(2, ...withH.map(x => x.h)), [0, low], zones);
+  chart('pchart', f, x => x.pitch, -90, 90, [-25, 25], zones);
+  blob(`/lidar/file?session=${sid()}&name=top.png`).then(u => $('toppic').src = u);
+  blob(`/lidar/file?session=${sid()}&name=stage_floor.png`).then(u => $('floorpic').src = u).catch(() => $('floorpic').remove());
+  blob(`/lidar/file?session=${sid()}&name=stage_occupancy.png`).then(u => $('occpic').src = u).catch(() => $('occpic').remove());
+  api(`/lidar/frames?session=${sid()}`).then(r => r.json()).then(fr => {
+    const pick = fr.filter((_, k) => k % Math.max(1, Math.floor(fr.length / 8)) === 0).slice(0, 8);
+    $('thumbs').innerHTML = pick.map(p => `<img data-i="${p.i}" alt="${esc(p.room)} at ${p.t} s">`).join('');
+    document.querySelectorAll('#thumbs img').forEach(async im => im.src = await blob(`/lidar/frame?session=${sid()}&i=${im.dataset.i}&size=200`));
+  });
+}
+
+function chart(id, f, val, lo, hi, band, zones) {
+  const cv = $(id), dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const t1 = f.length ? f[f.length - 1].t : 1, X = t => 34 + (W - 44) * t / t1, Y = v => 8 + (H - 26) * (1 - (v - lo) / (hi - lo));
+  const css = getComputedStyle(document.documentElement);
+  g.fillStyle = css.getPropertyValue('--think'); g.fillRect(34, Y(band[1]), W - 44, Y(band[0]) - Y(band[1]));
+  g.fillStyle = css.getPropertyValue('--muted'); g.font = '11px system-ui';
+  [lo, (lo + hi) / 2, hi].forEach(v => g.fillText(Math.round(v * 10) / 10, 2, Y(v) + 4));
+  g.fillText(`${Math.round(t1 / 60)} min`, W - 44, H - 4);
+  f.forEach(x => { const v = val(x); if (v == null) return;
+    g.fillStyle = COLORS[zones.indexOf(x.room) % COLORS.length]; g.fillRect(X(x.t), Y(Math.max(lo, Math.min(hi, v))) - 1, 2, 2); });
+}
+start();
+</script>
+</body>
+</html>

@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>House 3D</title>
+<style>
+:root{--bg:#121211;--fg:#eceae4;--muted:#9a978f;--card:rgba(29,28,26,.88);--line:#33312d;--accent:#3b82f6}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,sans-serif;overflow:hidden}
+#view{position:fixed;inset:0}
+.panel{position:fixed;left:12px;right:12px;top:12px;max-width:460px;background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px}
+.panel h1{font-size:1.05rem;margin:0 0 4px}
+.muted{color:var(--muted);font-size:.85rem}
+.row{display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px}
+label{display:flex;gap:6px;align-items:center;font-size:.9rem}
+input[type=range]{flex:1;min-width:120px}
+a{color:var(--accent)}
+#status{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);color:var(--muted)}
+.tag{position:fixed;pointer-events:none;font-size:.75rem;background:rgba(0,0,0,.65);color:#ffd27a;padding:1px 6px;border-radius:6px;white-space:nowrap;transform:translate(-50%,-120%)}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="view"></div>
+<div id="status">Loading your home…</div>
+<div class="panel">
+  <h1 id="title">House 3D</h1>
+  <div class="muted" id="sub">Drag to turn · pinch or scroll to zoom · two fingers to move</div>
+  <div class="row"><label for="cut">Cut at</label><input type="range" id="cut" min="0.3" max="3" step="0.05" value="1.6"><span id="cutv">1.6 m</span></div>
+  <div class="row">
+    <label><input type="checkbox" id="boxes"> Furniture boxes</label>
+    <label><input type="checkbox" id="marks" checked> Landmarks</label>
+    <a id="back" href="/lidar">← House builds</a>
+  </div>
+</div>
+<div id="tags"></div>
+<script type="module">
+import * as THREE from 'three';
+import {OrbitControls} from 'three/addons/controls/OrbitControls.js';
+
+const $ = id => document.getElementById(id);
+const store = {get: k => { try { return JSON.parse(localStorage.getItem(k)) } catch { return null } },
+               set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }};
+const q = new URLSearchParams(location.search);
+if (q.get('k')) store.set('key', q.get('k'));
+const KEY = q.get('k') || store.get('key') || '', S = q.get('s') || '';
+const api = path => fetch(path, {headers: {'X-API-Key': KEY}}).then(r => r.ok ? r : Promise.reject(new Error(r.status)));
+$('back').href = `/lidar?s=${encodeURIComponent(S)}`;
+
+const renderer = new THREE.WebGLRenderer({antialias: true});
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.localClippingEnabled = true;
+$('view').appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x121211);
+const camera = new THREE.PerspectiveCamera(55, 1, 0.05, 200);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+const cut = new THREE.Plane(new THREE.Vector3(0, -1, 0), 1.6);  // keep points below the cut (three.js y = height)
+const toThree = (x, y, z) => new THREE.Vector3(x, z, -y);  // house: z up → three.js: y up
+const boxes = new THREE.Group(), labels = [];
+scene.add(boxes);
+
+function resize() {
+  renderer.setSize(innerWidth, innerHeight);
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize);
+resize();
+
+async function load() {
+  if (!KEY || !S) throw new Error('Open this page from House builds (it needs your key link and a scan).');
+  const [house, buf] = await Promise.all([api(`/lidar/file?session=${encodeURIComponent(S)}&name=house.json`).then(r => r.json()),
+                                          api(`/lidar/file?session=${encodeURIComponent(S)}&name=cloud.bin`).then(r => r.arrayBuffer())]);
+  const head = new DataView(buf, 0, 16), lo = [0, 1, 2].map(i => head.getFloat32(i * 4, true)), n = head.getUint32(12, true);
+  const cm = new Uint16Array(buf, 16, n * 3), rgb = new Uint8Array(buf, 16 + n * 6, n * 3);
+  const pos = new Float32Array(n * 3), col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) {
+    const x = lo[0] + cm[3 * i] / 100, y = lo[1] + cm[3 * i + 1] / 100, z = lo[2] + cm[3 * i + 2] / 100;
+    pos[3 * i] = x; pos[3 * i + 1] = z; pos[3 * i + 2] = -y;
+    col[3 * i] = rgb[3 * i] / 255; col[3 * i + 1] = rgb[3 * i + 1] / 255; col[3 * i + 2] = rgb[3 * i + 2] / 255;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.computeBoundingBox();
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({size: 0.03, vertexColors: true, clippingPlanes: [cut]})));
+
+  for (const o of house.objects) {  // what the duck must walk around
+    const [w, d, h] = o.size, b = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+      new THREE.MeshBasicMaterial({color: 0xff5a4f, wireframe: true, transparent: true, opacity: 0.6}));
+    b.position.copy(toThree(o.center[0], o.center[1], h / 2));
+    b.rotation.y = o.yaw;
+    boxes.add(b);
+  }
+  boxes.visible = false;
+  for (const lm of house.landmarks) {
+    const el = document.createElement('div');
+    el.className = 'tag';
+    el.textContent = lm.label + (lm.mobility === 'fixed' ? ' ★' : '');
+    $('tags').appendChild(el);
+    labels.push({el, p: toThree(lm.center[0], lm.center[1], (lm.size[2] || 0.5) + 0.1)});
+  }
+  const bb = geo.boundingBox, c = bb.getCenter(new THREE.Vector3()), size = bb.getSize(new THREE.Vector3());
+  controls.target.set(c.x, 0.5, c.z);
+  camera.position.set(c.x, Math.max(size.x, size.z) * 0.9, c.z + Math.max(size.x, size.z) * 0.7);  // a dollhouse view from above
+  const sp = house.spaces.map(s => { const xs = s.polygon.map(p => p[0]), ys = s.polygon.map(p => p[1]);
+    return `${(Math.max(...xs) - Math.min(...xs)).toFixed(1)} × ${(Math.max(...ys) - Math.min(...ys)).toFixed(1)} m`; });
+  $('title').textContent = `Your home · ${S}`;
+  $('sub').textContent = `${n.toLocaleString()} LiDAR points · ${sp.join(', ')} · ${house.landmarks.length} landmarks (★ = never moves). Drag to turn, pinch to zoom.`;
+  $('status').remove();
+}
+
+$('cut').oninput = e => { cut.constant = +e.target.value; $('cutv').textContent = `${(+e.target.value).toFixed(2)} m`; };
+$('boxes').onchange = e => { boxes.visible = e.target.checked; };
+$('marks').onchange = e => { labels.forEach(l => l.el.style.display = e.target.checked ? '' : 'none'); };
+
+const v = new THREE.Vector3();
+renderer.setAnimationLoop(() => {
+  controls.update();
+  renderer.render(scene, camera);
+  for (const l of labels) {
+    if (l.el.style.display === 'none') continue;
+    v.copy(l.p).project(camera);
+    const show = v.z < 1 && l.p.y <= cut.constant + 0.3;
+    l.el.style.visibility = show ? 'visible' : 'hidden';
+    l.el.style.left = `${(v.x + 1) / 2 * innerWidth}px`;
+    l.el.style.top = `${(1 - v.y) / 2 * innerHeight}px`;
+  }
+});
+
+load().catch(e => { $('status').textContent = e.message; });
+</script>
+</body>
+</html>

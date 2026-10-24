@@ -12,6 +12,7 @@ import numpy as np
 CELL = 0.05
 OPEN_BORDER = 1.2  # zones touching along more than this (m) are one open space; less is a doorway
 WALL_T = 0.10
+DOOR_REACH = 0.45  # a door cuts walls whose line is this close to its centre (the measured centre can sit off the line)
 
 
 def plan(V, Nv, traj, tlab):
@@ -92,7 +93,7 @@ def plan(V, Nv, traj, tlab):
         if n_open == 999:  # no walls either side anywhere near the tap: open plan
             parent[root(a)] = root(b)
             continue
-        width = (sum(ends) + 3) * CELL  # + the one-cell wall margin on each side
+        width = (sum(ends) + 4.5) * CELL  # + the wall margin each side; +1.5 cells: 19 test homes measured 5-10 cm narrow
         if os.environ.get("FLOORPLAN_DEBUG"):
             print(f"tap {tlab[k - 1]} -> {tlab[k]} at frame {k}: narrowest frame {j}, half-width {dist[r, c] * CELL:.2f} m, "
                   f"run across {width:.2f} m (axis {axis})")
@@ -220,14 +221,15 @@ def walls_from(edges, doors):
             if j > i and na != nb and ax == bx and 0 < abs(pa - pb) < 0.35 and min(ha, hb) - max(la, lb) > 0.3:
                 lo, hi, pos, t = max(la, lb), min(ha, hb), (pa + pb) / 2, abs(pa - pb)
                 cuts = [(d["center"][1 - ax] - d["width"] / 2, d["center"][1 - ax] + d["width"] / 2) for d in doors
-                        if d["axis"] == ax and abs(d["center"][ax] - pos) < 0.3]
+                        if d["axis"] == ax and abs(d["center"][ax] - pos) < DOOR_REACH]
                 walls += [(ax, pos, a, b, t, True) for a, b in subtract(lo, hi, cuts)]
                 used |= {i, j}
                 segs[i][3:] = [la, max(la, lo)] if la < lo else [min(hi, ha), ha]  # what is left of each edge stays outer
                 segs[j][3:] = [lb, max(lb, lo)] if lb < lo else [min(hi, hb), hb]
-    for name, ax, pos, lo, hi in segs:
-        if hi - lo > 0.1:
-            walls.append((ax, pos, lo, hi, WALL_T, False))
+    for name, ax, pos, lo, hi in segs:  # a door on two faces further apart than a shared wall still opens both
+        cuts = [(d["center"][1 - ax] - d["width"] / 2, d["center"][1 - ax] + d["width"] / 2) for d in doors
+                if d["axis"] == ax and abs(d["center"][ax] - pos) < DOOR_REACH]
+        walls += [(ax, pos, a, b, WALL_T, False) for a, b in subtract(lo, hi, cuts) if hi - lo > 0.1]
     return walls
 
 

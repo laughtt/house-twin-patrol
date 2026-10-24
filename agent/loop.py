@@ -21,13 +21,24 @@ ROOT = Path(__file__).parent.parent
 RADIUS, HZ, VX = 0.12, 5, 0.25  # the sim walking policy barely steps below 0.25 m/s
 
 
-def route(hmap, start, goal):
-    """A* on the map grown by the duck's radius, then pulled tight to straight runs between corners."""
-    k = 2 * int(RADIUS / CELL) + 1
-    blocked = cv.dilate(hmap.grid.astype(np.uint8), cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))).astype(bool)
-    cell = lambda p: (int(p[1] / CELL) + 1, int(p[0] / CELL) + 1)
-    s, g = cell(start), cell(goal)
-    blocked[s] = blocked[g] = False
+def route(hmap, start, goal, radius=RADIUS):
+    """A* on the map grown by the duck's radius (plus any margin for not knowing exactly where it is), then pulled
+    tight to straight runs between corners."""
+    k = 2 * int(radius / CELL) + 1
+    blocked = cv.dilate(hmap.grid.astype(np.uint8), cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k)))
+    cell = lambda p: (int((p[1] - hmap.o[1]) / CELL) + 1, int((p[0] - hmap.o[0]) / CELL) + 1)  # noqa: E731
+    blocked = blocked.astype(bool) | hmap.grid
+
+    def escape(c, r=25):  # standing closer to a wall than the margin: go first to the nearest cell outside it
+        if not blocked[c]:
+            return c
+        i0, j0 = max(c[0] - r, 0), max(c[1] - r, 0)
+        free = np.argwhere(~blocked[i0:c[0] + r + 1, j0:c[1] + r + 1])
+        if not len(free):
+            return c
+        i, j = free[np.argmin(((free - [c[0] - i0, c[1] - j0]) ** 2).sum(1))]
+        return (int(i + i0), int(j + j0))
+    s0, s, g = cell(start), escape(cell(start)), escape(cell(goal))
     came, cost, todo = {s: None}, {s: 0.0}, [(0.0, s)]
     while todo:
         _, c = heapq.heappop(todo)
@@ -47,13 +58,13 @@ def route(hmap, start, goal):
     while c:
         cells.append(c)
         c = came[c]
-    pts = [((j - 1 + 0.5) * CELL, (i - 1 + 0.5) * CELL) for i, j in cells[::-1]]
+    pts = [((j - 1 + 0.5) * CELL + hmap.o[0], (i - 1 + 0.5) * CELL + hmap.o[1]) for i, j in cells[::-1]]
     clear = lambda a, b: all(not blocked[cell((a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t))] for t in np.linspace(0, 1, 40))
     out = [pts[0]]
     for i in range(1, len(pts)):
         if not clear(out[-1], pts[i]):
             out.append(pts[i - 1])
-    return out[1:] + [pts[-1]]
+    return ([pts[0]] if s != s0 else []) + out[1:] + [pts[-1]]
 
 
 def main():
