@@ -4,6 +4,8 @@ simulated 8x8 ToF correct it. Compares odometry alone / +ToF / +markers / +both 
 uv run --python 3.12 --with mujoco --with opencv-python-headless==5.0.0.93 --with matplotlib python eval/localize_test.py [--imperfect-map]
 --imperfect-map: the filter's map has every piece of furniture shifted up to 15 cm and misses a bag that is in the world
   (and, with --zero-stickers, every often-moved landmark such as a chair sits 1 m from where the map has it).
+--walk <scan.zip>: the duck follows the path the person walked in that scan (out/current must be that scan's house);
+  works for any home. No bag in the imperfect map (its spot belongs to the default route).
 --zero-stickers: no markers; the duck starts with no idea where it is. Compares ToF alone / ToF + recognised objects
   (simulated detector: 70 % hit rate, 3° bearing noise, 10 % wrong class, 5 % false sightings) / the same from a known start.
 """
@@ -38,6 +40,30 @@ HZ, SPEED, TURN = 5, 0.25, 0.8
 # hallway → kitchen walkway (look at #0) → back → hallway west (look at #2) → right corridor → living (look at #3)
 ROUTE = [(3.3, 2.4), (3.45, 0.9), (2.0, 0.9), ("face", -math.pi / 2), (3.45, 0.95), (3.45, 2.3), (1.0, 2.3),
          ("face", math.pi), (3.45, 2.3), (3.45, 6.0), ("face", math.pi / 2), (1.0, 6.0)]
+WALK = sys.argv[sys.argv.index("--walk") + 1] if "--walk" in sys.argv else None
+if WALK:  # every 0.5 m of the person's walk that is free floor for a duck
+    from twin.scan_io import Export
+    sf = json.loads((ROOT / "out/current/report.json").read_text())["scan_frame"]
+    c_, s_ = math.cos(sf["theta"]), math.sin(sf["theta"])
+    free = HouseMap(house).free
+    ROUTE = []
+    for f in Export(WALK).frames:
+        if f["tracking"] != "normal":
+            continue
+        T = np.array(f["T"]).reshape(4, 4)
+        x, y = T[0, 3], -T[2, 3]  # ARKit → house axes, then the scan's turn and origin
+        x, y = c_ * x + s_ * y - sf["origin"][0], -s_ * x + c_ * y - sf["origin"][1]
+        if free(x, y) and (not ROUTE or math.hypot(x - ROUTE[-1][0], y - ROUTE[-1][1]) >= 0.5):
+            ROUTE.append((float(x), float(y)))
+    from agent.loop import route  # people squeeze past furniture: the duck plans its own way between their steps
+    hm, legs = HouseMap(house), [ROUTE[0]]
+    for b in ROUTE[3::3]:  # from where the duck got to, to the next step of theirs it can reach
+        leg = route(hm, legs[-1], b)
+        if leg:
+            legs += leg[1:]
+        elif len(legs) == 1:  # boxed in where the walk began: start from a later step instead
+            legs = [b]
+    ROUTE = legs
 
 (ROBOT / "twin_eye.xml").write_text('''<mujoco model="twin_eye">
   <include file="myhouse.xml"/>
@@ -97,7 +123,7 @@ if IMPERFECT:  # the filter's map is wrong; the world it senses is the real twin
     for o in fmap["objects"] + fmap.get("landmarks", []):
         o["center"] = [c + float(mrng.uniform(-0.15, 0.15)) for c in o["center"]]
     hmap = HouseMap(fmap)
-    bag = (3.2, 4.4)  # beside the right corridor the route uses, 15 cm clear of the duck's line (it can't drive through it)
+    bag = (3.2, 4.4) if not WALK else (-50.0, -50.0)  # beside the right corridor the route uses, 15 cm clear of the duck's line (it can't drive through it)
     bx_, by_ = math.cos(th) * bag[0] - math.sin(th) * bag[1] + px, math.sin(th) * bag[0] + math.cos(th) * bag[1] + py
 else:
     hmap = HouseMap(house)

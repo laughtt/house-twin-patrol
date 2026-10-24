@@ -70,6 +70,19 @@ def assemble(session, sc, spaces, zones, walls_full, doors, objects, landmarks, 
     }
 
 
+def occupancy(path, V, o, gm, cell=0.05, dz=0.1, top=2.0):
+    """Where the LiDAR saw any surface, in 5 cm cells and 10 cm height bands up to 2 m (house frame): the real shape
+    of walls and furniture, for checking a range sensor at any height. Saved next to house.json."""
+    p = V[(V[:, 2] > 0.05) & (V[:, 2] < top)]
+    lo = p[:, :2].min(0) - o
+    ij = np.floor((p[:, :2] - o - lo) / cell).astype(int)
+    k = np.floor(p[:, 2] / dz).astype(int)
+    occ = np.zeros((int(top / dz), ij[:, 1].max() + 1, ij[:, 0].max() + 1), bool)
+    occ[k, ij[:, 1], ij[:, 0]] = True
+    np.savez_compressed(path, occ=occ, lo=lo, cell=cell, dz=dz, ground=gm[2], ground_lo=gm[0] - o, ground_tile=gm[1])  # + floor heights
+    return {"file": Path(path).name, "cell": cell, "dz": dz, "lo": [round(float(v), 3) for v in lo], "shape": list(occ.shape)}
+
+
 def top_view(path, house, wall_pts, traj, tlab, px=80):
     allp = np.concatenate([np.array(r["polygon"]) for r in house["spaces"]])
     lo = allp.min(0) - 0.6

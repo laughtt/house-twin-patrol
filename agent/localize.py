@@ -16,7 +16,7 @@ TOF_MAX = 4.0
 class HouseMap:
     """What a sensor 20 cm above the floor can hit: walls, solid furniture, and only the legs of tables and chairs."""
 
-    def __init__(self, house, eye_h=0.2):
+    def __init__(self, house, eye_h=0.2, occupancy=None):
         xs = [p for w in house["walls"] for p in (w["a"][0], w["b"][0])]
         ys = [p for w in house["walls"] for p in (w["a"][1], w["b"][1])]
         self.o = np.minimum(0.0, [min(xs), min(ys)])  # grid origin: (0, 0), or lower if a room lies west or south of it
@@ -30,7 +30,7 @@ class HouseMap:
         for o in house["objects"]:
             (cx, cy), (w, d, h), yaw = o["center"], o["size"], o["yaw"]
             legs = o["kind"] == "table" or o["label"] == "chair"
-            if h < eye_h and not legs:
+            if h < eye_h - 0.06 and not legs:  # the ToF rows look ±3° off level: from ~1 m they hit things 6 cm lower
                 continue
             c, s = math.cos(yaw), math.sin(yaw)
             parts = [(sx * (w / 2 - 0.04), sy * (d / 2 - 0.04), 0.02, 0.02) for sx in (-1, 1) for sy in (-1, 1)] if legs else [(0, 0, w / 2, d / 2)]
@@ -39,6 +39,15 @@ class HouseMap:
                 x, y = cx + (px + u) * c - (py + v) * s - self.o[0], cy + (px + u) * s + (py + v) * c - self.o[1]
                 ok = (x >= 0) & (x < self.W) & (y >= 0) & (y < self.L)
                 self.grid[(y[ok] / CELL).astype(int) + 1, (x[ok] / CELL).astype(int) + 1] = True
+        if occupancy:  # the scan's real surfaces at the sensor's height (house.json "occupancy"), beyond walls and boxes
+            z = np.load(occupancy)
+            band = z["occ"][max(int((eye_h - 0.1) / z["dz"]), 0):int((eye_h + 0.1) / z["dz"]) + 1].any(0)
+            band = cv.morphologyEx(band.astype(np.uint8), cv.MORPH_CLOSE, np.ones((3, 3), np.uint8)).astype(bool)  # 5 cm gaps
+            yy, xx = np.mgrid[0:self.grid.shape[0], 0:self.grid.shape[1]]
+            i = (((yy - 1) * CELL + self.o[1] - z["lo"][1]) / z["cell"]).astype(int)
+            j = (((xx - 1) * CELL + self.o[0] - z["lo"][0]) / z["cell"]).astype(int)
+            ok = (i >= 0) & (j >= 0) & (i < band.shape[0]) & (j < band.shape[1])
+            self.grid[ok] |= band[i[ok], j[ok]]
         self.markers = {m["id"]: m for m in house.get("markers", [])}
         self.landmarks = [lm for lm in house.get("landmarks", []) if lm.get("cls") and lm.get("weight", 0) > 0]
         self.rooms = house.get("rooms", [])
@@ -79,6 +88,7 @@ class ParticleFilter:
         self.misfit = {}  # per landmark class: trusted sightings in a row that no guess explained
         self.w_slow = self.w_fast = None  # long- and short-term average ToF fit: a sudden drop = picked up and moved
         self.last_tof = None
+        self.blind = 0  # ToF frames in a row with no target at all
 
     @classmethod
     def anywhere(cls, house_map, n=2000, seed=0):
@@ -104,10 +114,11 @@ class ParticleFilter:
         l = left + self.rng.normal(0, 0.04 * d + 0.002, self.n)
         self.p[:, 2] += turn + self.rng.normal(0, 0.06 * abs(turn) + 0.08 * d + 0.002, self.n)
         c, s = np.cos(self.p[:, 2]), np.sin(self.p[:, 2])
-        x, y = self.p[:, 0] + f * c - l * s, self.p[:, 1] + f * s + l * c
-        ok = self.map.free(x, y)  # a duck can't go through walls or furniture: it stays put (wheels slip)
-        self.p[ok, 0], self.p[ok, 1] = x[ok], y[ok]
-        self.w *= np.where(ok, 1.0, 0.3)
+        self.p[:, 0] += f * c - l * s
+        self.p[:, 1] += f * s + l * c
+        # a duck can't stand inside furniture. (Holding guesses back at walls instead made the cloud lag and split on
+        # routes that pass close to furniture: 65 % → 89 % of the time within 0.3 m when that rule went.)
+        self.w *= self.map.free(self.p[:, 0], self.p[:, 1]) * 0.99 + 0.01
         self._normalise()
 
     def update_tof(self, dist_mm, status):
@@ -119,7 +130,9 @@ class ParticleFilter:
         frame = np.r_[meas.ravel(), valid.ravel()]
         frozen = self.last_tof is not None and np.array_equal(frame, self.last_tof)
         self.last_tof = frame
-        if frozen or not valid.any() or (meas[valid] < 0.05).all():  # stuck, blind ("nothing within 4 m" indoors) or covered
+        self.blind = 0 if valid.any() else self.blind + 1
+        # stuck, covered, or no target for 5 s (open space says "nothing within 4 m" for a moment; a dead sensor for ever)
+        if frozen or self.blind > 25 or (valid.any() and (meas[valid] < 0.05).all()):
             return
         meas = np.where(valid, meas, TOF_MAX + 1.0).mean(0)  # rows 3 and 4 look 2.8° up and down: average them
         x, y, yaw = (np.repeat(self.p[:, k:k + 1], 8, 1) for k in range(3))
@@ -134,7 +147,7 @@ class ParticleFilter:
         self.w *= fit
         self._normalise()
         lost = 1 - self.w_fast / max(self.w_slow, 1e-12)
-        if lost > 0.6:  # the walls stopped matching where we think we are: try fresh guesses anywhere (augmented MCL)
+        if lost > 0.6 and valid.any(0).sum() >= 5:  # walls in view that stopped matching (not just open space): try fresh guesses
             k = self.rng.choice(self.n, max(1, int(self.n * min(0.02, 0.05 * lost))), replace=False)
             self.p[k] = self._random_poses(len(k))
             self.w[k] = self.w.mean()

@@ -39,14 +39,14 @@ def upright_detect(img, up, name=None):
     return out
 
 
-def lift(P3, d, box, s, P, z0, R2, walls):
+def lift(P3, d, box, s, P, sc, walls):
     """One detection → the main surface in its box (floor and room walls removed), in the house frame."""
     x0, y0, x1, y1 = np.array(box) * s
     mx, my = 0.08 * (x1 - x0), 0.08 * (y1 - y0)
     sl = np.s_[max(int(y0 + my), 0):int(np.ceil(y1 - my)), max(int(x0 + mx), 0):int(np.ceil(x1 - mx))]
     pts = P3[sl][d[sl] > 0][:, :3] @ P[:3, :3].T + P[:3, 3]
-    pts[:, :2] = pts[:, :2] @ R2.T
-    pts[:, 2] -= z0
+    pts[:, :2] = pts[:, :2] @ sc.R2.T
+    pts[:, 2] -= sc.z0 + sc.ground(pts[:, :2])
     keep = (pts[:, 2] > 0.05) & (pts[:, 2] < 2.2)
     for ax, pos, lo, hi, t in walls:  # also drops door jambs when the object is seen through a doorway
         keep &= ~((np.abs(pts[:, ax] - pos) < t / 2 + 0.06) & (pts[:, 1 - ax] > lo) & (pts[:, 1 - ax] < hi))
@@ -114,7 +114,7 @@ def candidates(ex, frames, sc, zones, walls, detect_fn=upright_detect, every=2):
         if dets:
             P3 = cv.depthTo3d(d, sc.Kd)
             for cls, score, box in dets:
-                p = lift(P3, d, box, w / f["rgb_wh"][0], P, sc.z0, sc.R2, walls)
+                p = lift(P3, d, box, w / f["rgb_wh"][0], P, sc, walls)
                 if p is not None:
                     found.append((cls, score, p, k, box))
     groups = []  # same class + touching (shared 15 cm cells) = one object seen from another side
@@ -173,7 +173,7 @@ def tagged(ex, frames, sc, walls, cands):
         ray = np.linalg.inv(sc.Kd) @ [u * w, v * h, 1.0]
         p = P[:3, :3] @ (ray * z / ray[2]) + P[:3, 3]
         p[:2] = sc.R2 @ p[:2]
-        p[2] -= sc.z0
+        p[2] -= sc.z0 + float(sc.ground(p[:2]))
         label = t["label"].strip().lower()
         near = [c for c in cands if np.all(p[:2] > c["lo"] - 0.3) and np.all(p[:2] < c["hi"] + 0.3)]
         if near:
@@ -187,7 +187,7 @@ def tagged(ex, frames, sc, walls, cands):
             continue
         rw, rh = f["rgb_wh"]
         box = [(u - 0.12) * rw, (v - 0.12) * rh, (u + 0.12) * rw, (v + 0.12) * rh]
-        pts = lift(cv.depthTo3d(d, sc.Kd), d, box, w / rw, P, sc.z0, sc.R2, walls)
+        pts = lift(cv.depthTo3d(d, sc.Kd), d, box, w / rw, P, sc, walls)
         if pts is None:
             pts = p + np.random.default_rng(0).uniform(-0.15, 0.15, (30, 3))
         cands.append(_boxed({"id": f"t{len(cands)}", "cls": LM["tag_cls"].get(label, ""), "label": label, "pts": [pts],

@@ -199,7 +199,8 @@ def fake_scan(tags, depth=None):
     P[:3, 3] = [1.5, 0, 1.0]
     ex = SimpleNamespace(tags=lambda: tags, load=lambda f, conf=2: (d, P))
     frames = [{"i": 10, "rgb_wh": [960, 720]}]
-    sc = SimpleNamespace(wh=(w, h), Kd=kmat([200, 200, 128, 96]), R2=np.eye(2), z0=0.0, traj=np.array([[1.5, 0, 1.0]]), poses=[P])
+    sc = SimpleNamespace(wh=(w, h), Kd=kmat([200, 200, 128, 96]), R2=np.eye(2), z0=0.0, traj=np.array([[1.5, 0, 1.0]]), poses=[P],
+                         ground=lambda xy: np.zeros(np.shape(xy)[:-1]))  # flat floor
     return ex, frames, sc
 
 

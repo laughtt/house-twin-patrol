@@ -24,18 +24,22 @@ from agent.localize import HouseMap, ParticleFilter, _wrap  # noqa: E402
 from agent.perceive import colour_hist  # noqa: E402
 from twin import CFG  # noqa: E402
 from twin.landmarks import upright_detect  # noqa: E402
+from twin.fuse import ground_at  # noqa: E402
 from twin.scan_io import Export, kmat  # noqa: E402
 
 ex = Export(sys.argv[1])
 ALL = "--all-frames" in sys.argv
+ODO = sys.argv[sys.argv.index("--odometry") + 1] if "--odometry" in sys.argv else "duck"  # duck | gyro | perfect
 HOUSE = ROOT / "out/houses" / ex.session
 house = json.loads((HOUSE / "house.json").read_text())
 sf = json.loads((HOUSE / "report.json").read_text())["scan_frame"]
-OUT = ROOT / "out/lowview" / (ex.session + ("-all" if ALL else ""))
+OUT = ROOT / "out/lowview" / (ex.session + ("-all" if ALL else "") + ("" if ODO == "duck" else "-" + ODO))
 OUT.mkdir(parents=True, exist_ok=True)
 c, s = math.cos(sf["theta"]), math.sin(sf["theta"])
 R2, z0, o = np.array([[c, s], [-s, c]]), sf["z0"], np.array(sf["origin"])
 frames = [f for f in ex.frames if f["tracking"] == "normal"]
+_z = np.load(HOUSE / house["occupancy"]["file"]) if "occupancy" in house else {}
+GROUND = (_z["ground_lo"], float(_z["ground_tile"]), _z["ground"]) if "ground" in _z else None
 
 
 def pose(P):
@@ -43,6 +47,8 @@ def pose(P):
     p = P[:3, 3].copy()
     p[2] -= z0
     p[:2] = R2 @ p[:2] - o
+    if GROUND is not None:  # height above the floor under the camera (the scan's floor tiles)
+        p[2] -= float(ground_at(GROUND, p[:2]))
     fwd = R2 @ (P[:3, :3] @ [0, 0, 1.0])[:2]
     return p, math.atan2(fwd[1], fwd[0])
 
@@ -101,7 +107,8 @@ first = low.index(True) if any(low) else None
 if first is None:
     sys.exit(f"no frame below {CFG['landmarks']['low_h']} m in {ex.session}: record a duck-height pass (or use --all-frames)")
 eye = float(np.median([p[2] for (p, _), lw in zip(truth, low) if lw]))
-hmap = HouseMap(house, eye_h=min(eye, 0.5))
+occ = HOUSE / house["occupancy"]["file"] if "occupancy" in house else None
+hmap = HouseMap(house, eye_h=eye, occupancy=occ)  # a level ray at this height passes over anything lower
 p0, y0_ = truth[first]
 filters = {"ToF": ParticleFilter.anywhere(hmap, seed=1), "ToF + objects": ParticleFilter.anywhere(hmap, seed=1),
            "ToF + objects + room colour": ParticleFilter.anywhere(hmap, seed=1),
@@ -115,8 +122,14 @@ for k in range(first, len(frames)):
     dx, dy = pb[0] - pa[0], pb[1] - pa[1]
     fwd, left, turn = dx * math.cos(ya) + dy * math.sin(ya), -dx * math.sin(ya) + dy * math.cos(ya), float(_wrap(yb - ya))
     d_ = math.hypot(fwd, left)
-    of, ol = fwd * 1.04 + rng.normal(0, 0.02 * d_), left + 0.02 * d_ + rng.normal(0, 0.03 * d_)
-    ot = turn * 1.03 + 0.05 * d_ + rng.normal(0, 0.01 * abs(turn) + 0.01 * d_)
+    if ODO == "perfect":
+        of, ol, ot = fwd, left, turn
+    elif ODO == "gyro":  # a hand-held phone sweeps thousands of degrees: a turn-proportional bias is a duck's, not a gyro's
+        of, ol = fwd * 1.04 + rng.normal(0, 0.02 * d_), left + 0.02 * d_ + rng.normal(0, 0.03 * d_)
+        ot = turn + rng.normal(0, 0.005 * abs(turn) + 0.01 * d_)
+    else:
+        of, ol = fwd * 1.04 + rng.normal(0, 0.02 * d_), left + 0.02 * d_ + rng.normal(0, 0.03 * d_)
+        ot = turn * 1.03 + 0.05 * d_ + rng.normal(0, 0.01 * abs(turn) + 0.01 * d_)
     for flt in filters.values():
         flt.predict(of, ol, ot)
     if not low[k]:

@@ -38,6 +38,35 @@ def manhattan(n):
     return float(np.angle(np.exp(4j * phi[near]).sum()) / 4) % (np.pi / 2)
 
 
+def ground_map(V, Nv, tile=0.5):
+    """Floor height under every 50 cm tile (homes have steps and sunken rooms): the low end of what faces up there.
+    Tiles with no floor in view (under a bed or a sofa) take the mean of the known tiles around them."""
+    up = V[(Nv[:, 2] > 0.9) & (V[:, 2] > -0.1) & (V[:, 2] < 0.35)]
+    lo = V[:, :2].min(0)
+    shape = tuple(np.ceil((V[:, :2].max(0) - lo) / tile).astype(int)[::-1] + 1)
+    ij = np.floor((up[:, :2] - lo) / tile).astype(int)
+    key = ij[:, 1] * shape[1] + ij[:, 0]
+    order = np.lexsort((up[:, 2], key))
+    k, first, cnt = np.unique(key[order], return_index=True, return_counts=True)
+    g = np.full(shape, np.nan, np.float32)
+    g.flat[k[cnt >= 30]] = up[order, 2][(first + cnt // 5)[cnt >= 30]]  # 20th percentile of each tile
+    known = ~np.isnan(g)
+    if not known.any():
+        g[:], known[:] = 0, True
+    while not known.all():
+        v = cv.blur(np.where(known, g, 0), (3, 3), borderType=cv.BORDER_CONSTANT)
+        n = cv.blur(known.astype(np.float32), (3, 3), borderType=cv.BORDER_CONSTANT)
+        grow = ~known & (n > 0)
+        g[grow], known = v[grow] / n[grow], known | grow
+    return lo, tile, cv.medianBlur(g, 3)
+
+
+def ground_at(gm, xy):
+    lo, tile, g = gm
+    ij = np.clip(np.floor((np.asarray(xy, float) - lo) / tile).astype(int), 0, [g.shape[1] - 1, g.shape[0] - 1])
+    return g[ij[..., 1], ij[..., 0]]
+
+
 def fuse(ex, frames):
     w, h = frames[0]["depth_wh"]
     Kd = kmat(frames[0]["K_depth"])
@@ -80,15 +109,19 @@ def fuse(ex, frames):
     traj = np.array([P[:3, 3] for P in poses])
     traj[:, :2] = traj[:, :2] @ R2.T
     traj[:, 2] -= z0
+    gm = ground_map(V, Nv)  # from here on every height is above the floor right under it
+    V[:, 2] -= ground_at(gm, V[:, :2])
+    traj[:, 2] -= ground_at(gm, traj[:, :2])
     return SimpleNamespace(V=V, Nv=Nv, C=C, L=L, wall=wall, names=names, tlab=[f["room"] for f in frames], poses=poses,
-                           traj=traj, z0=z0, theta=theta, R2=R2, vol=vol, Kd=Kd, wh=(w, h))
+                           traj=traj, z0=z0, theta=theta, R2=R2, vol=vol, Kd=Kd, wh=(w, h), gm=gm, ground=lambda xy: ground_at(gm, xy))
 
 
 def to_house(sc, p, o):
     """ARKit-derived world points (n, 3) → the house frame (floor z 0, axes aligned, origin o)."""
     p = np.array(p, float)
-    p[:, 2] -= sc.z0
-    p[:, :2] = p[:, :2] @ sc.R2.T - o
+    p[:, :2] = p[:, :2] @ sc.R2.T
+    p[:, 2] -= sc.z0 + sc.ground(p[:, :2])
+    p[:, :2] -= o
     return p
 
 
@@ -112,4 +145,4 @@ def cloud(path, sc, o):
     j = np.clip(np.searchsorted(ck, vkey(tp, 0.05)), 0, len(ck) - 1)
     rgb = np.where((ck[j] == vkey(tp, 0.05))[:, None], cc[j][:, ::-1] / 255, 0.6)
     cv.savePointCloud(str(path), *(a.astype(np.float32).reshape(-1, 1, 3) for a in (tp, tn, rgb)))
-    return len(tp)
+    return tp

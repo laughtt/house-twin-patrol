@@ -24,10 +24,12 @@ RADIUS, HZ, VX = 0.12, 5, 0.25  # the sim walking policy barely steps below 0.25
 def route(hmap, start, goal):
     """A* on the map grown by the duck's radius, then pulled tight to straight runs between corners."""
     k = 2 * int(RADIUS / CELL) + 1
-    blocked = cv.dilate(hmap.grid.astype(np.uint8), cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k))).astype(bool)
+    blocked = cv.dilate(hmap.grid.astype(np.uint8), cv.getStructuringElement(cv.MORPH_ELLIPSE, (k, k)))
     cell = lambda p: (int((p[1] - hmap.o[1]) / CELL) + 1, int((p[0] - hmap.o[0]) / CELL) + 1)  # noqa: E731
     s, g = cell(start), cell(goal)
-    blocked[s] = blocked[g] = False
+    for c in (s, g):  # standing close to a wall is fine: free the duck's own footprint there (not the wall itself)
+        cv.circle(blocked, (c[1], c[0]), k // 2, 0, -1)
+    blocked = blocked.astype(bool) | hmap.grid
     came, cost, todo = {s: None}, {s: 0.0}, [(0.0, s)]
     while todo:
         _, c = heapq.heappop(todo)

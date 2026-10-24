@@ -68,7 +68,10 @@ def build(src, out=None, detect_fn=upright_detect, every=2, extra_markers=None, 
     traj = sc.traj.copy()
     traj[:, :2] -= o
     H.top_view(out / "top.png", house, V, traj, [sc.names.index(r) for r in sc.tlab])
-    n_cloud = fuse.cloud(out / "cloud.ply", sc, o)
+    surface = fuse.cloud(out / "cloud.ply", sc, o)
+    house["occupancy"] = H.occupancy(out / "occupancy.npz", surface, np.zeros(2), (sc.gm[0] - o, sc.gm[1], sc.gm[2]))  # fused: no stray pixels
+    (out / "house.json").write_text(json.dumps(house, indent=1))
+    n_cloud = len(surface)
     lap("export_s")
     low = sc.traj[:, 2] < lmk.LM["low_h"]
     report = {
