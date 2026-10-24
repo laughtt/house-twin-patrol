@@ -24,6 +24,7 @@ from agent.twin_sim import ROOT, TwinSim
 HZ, VX, TURN = 5, 0.25, 0.8
 SURE, ARRIVE, GOAL_S = 0.6, 0.25, 120  # confidence to act on the guess; how close is "there"; time per goal
 MARGIN = 0.18  # route clearance: the duck's 10 cm half width + 8 cm for where it thinks it is vs where it is
+SQUEEZE = 0.12  # when no route has that much room (a narrow door): 2 cm to spare, walked slowly
 
 
 def goals(sim):
@@ -87,14 +88,16 @@ def episode(args):
                                     "room_said": room_name(est[0], est[1]), "room_true": room_name(true[0], true[1])})
                     trace.append({"t": round(t, 1), "event": "arrive", "goal": g["name"], **results[-1]})
                     break
-                if path is None or t - last_plan > 2.0:
-                    path, last_plan = route(hmap, est[:2], g["xy"], MARGIN), t
+                if path is None or t - last_plan > 2.0:  # a narrow door: squeeze through with a smaller margin
+                    path, last_plan = route(hmap, est[:2], g["xy"], MARGIN) or route(hmap, est[:2], g["xy"], SQUEEZE), t
                 mode = "go" if path else "stuck"
                 if path:  # steer at the next corner of the route until 12 cm from it (aiming past a corner cuts it)
                     ahead = next((p for p in path if math.hypot(p[0] - est[0], p[1] - est[1]) > 0.12), path[-1])
                     e = float(_wrap(math.atan2(ahead[1] - est[1], ahead[0] - est[0]) - est[2]))
                     w = max(-TURN, min(TURN, 2.0 * e))
                     v = VX * max(0.0, math.cos(e)) ** 3  # slow down in turns instead of cutting the corner
+                    if sim.clearance[int((est[1] - hmap.o[1]) / 0.02) + 1, int((est[0] - hmap.o[0]) / 0.02) + 1] < MARGIN + 0.02:
+                        v = min(v, 0.08)  # tight spot (a door): creep
             true, odo, bumped = sim.move(true, v, w, 1 / HZ)
             bumps += bumped
             if bumped and v > 0:
