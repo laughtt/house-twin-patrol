@@ -114,7 +114,8 @@ def start_build(session):
     (folder / "house").mkdir(exist_ok=True)
     (folder / "house" / "report.json").unlink(missing_ok=True)
     log = open(folder / "build.log", "w")
-    build = subprocess.Popen(["nice", "-n", "10", sys.executable, "-m", "twin", "build", str(folder / "lidar.zip"), "--out", str(folder / "house")],
+    tags = ["--tags", str(folder / "web_tags.json")] if (folder / "web_tags.json").exists() else []
+    build = subprocess.Popen(["nice", "-n", "10", sys.executable, "-m", "twin", "build", str(folder / "lidar.zip"), "--out", str(folder / "house"), *tags],
                              cwd=ROOT.parent, stdout=log, stderr=subprocess.STDOUT)
     build.session = session
 
@@ -154,6 +155,71 @@ def lidar_build(session: str, x_api_key: str = Header("")):
         raise HTTPException(404, "no LiDAR scan in this session")
     start_build(session)
     return {"ok": True}
+
+
+def scan(session):
+    sys.path.insert(0, str(ROOT.parent))
+    from twin.scan_io import Export
+    return Export(session_dir(session) / "lidar.zip")
+
+
+def upright(ex, f):
+    """cv.rotate code that shows a frame the way the person saw it (gravity up), or None."""
+    from twin.landmarks import _rotation
+    _, P = ex.load(f)
+    return _rotation(P[:3, :3].T @ [0, 0, 1])
+
+
+@app.get("/lidar/frames")
+def lidar_frames(session: str, x_api_key: str = Header("")):
+    """Every 8th frame (2 s) with normal tracking: the photos the results page lets you tag."""
+    check(x_api_key)
+    ex = scan(session)
+    return [{"i": f["i"], "t": round(f["t"], 1), "room": f["room"]} for f in [f for f in ex.frames if f["tracking"] == "normal"][::8]]
+
+
+@app.get("/lidar/frame")
+def lidar_frame(session: str, i: int, size: int = 480, x_api_key: str = Header("")):
+    check(x_api_key)
+    ex = scan(session)
+    f = next((f for f in ex.frames if f["i"] == i), None)
+    if f is None:
+        raise HTTPException(404, "no such frame")
+    img, rot = ex.rgb(f), upright(ex, f)
+    img = img if rot is None else cv.rotate(img, rot)
+    s = min(1.0, max(64, min(size, 960)) / max(img.shape[:2]))
+    img = cv.resize(img, None, fx=s, fy=s, interpolation=cv.INTER_AREA)
+    from fastapi.responses import Response
+    return Response(cv.imencode(".jpg", img, [cv.IMWRITE_JPEG_QUALITY, 80])[1].tobytes(), media_type="image/jpeg")
+
+
+@app.get("/lidar/tags")
+def lidar_tags(session: str, x_api_key: str = Header("")):
+    check(x_api_key)
+    path = session_dir(session) / "web_tags.json"
+    return json.loads(path.read_text()) if path.exists() else []
+
+
+@app.post("/lidar/tags")
+async def lidar_save_tags(session: str, request: Request, x_api_key: str = Header("")):
+    """Tags made on the results page → web_tags.json (the app's format), then the house is built again.
+    A tap on an upright photo (screen=true) is turned back into the saved picture's coordinates."""
+    check(x_api_key)
+    ex = scan(session)
+    by_i = {f["i"]: f for f in ex.frames}
+    back = {cv.ROTATE_90_CLOCKWISE: lambda u, v: (v, 1 - u), cv.ROTATE_90_COUNTERCLOCKWISE: lambda u, v: (1 - v, u),
+            cv.ROTATE_180: lambda u, v: (1 - u, 1 - v), None: lambda u, v: (u, v)}
+    tags = []
+    for t in (await request.json())[:200]:
+        f = by_i.get(t.get("i"))
+        uv, label = t.get("uv"), str(t.get("label", "")).strip()[:40]
+        if f is None or not label or not (isinstance(uv, list) and len(uv) == 2 and all(isinstance(x, (int, float)) and 0 <= x <= 1 for x in uv)):
+            raise HTTPException(400, "bad tag")
+        u, v = back[upright(ex, f)](*uv) if t.get("screen") else uv
+        tags.append({"i": f["i"], "uv": [round(u, 4), round(v, 4)], "label": label, "room": f["room"]})
+    (session_dir(session) / "web_tags.json").write_text(json.dumps(tags, indent=1))
+    start_build(session)
+    return {"ok": True, "tags": len(tags)}
 
 
 @app.get("/lidar/file")

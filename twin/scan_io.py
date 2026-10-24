@@ -30,6 +30,7 @@ class Export:
             self.z, self.pre, self.session = None, f"{src}/", src.name
         self.frames = [json.loads(s) for s in self.read("frames.jsonl").decode().splitlines() if s.strip()]
         self.labels = self.json("labels.json") or {}
+        self.extra_tags = []  # tags added later on the results page (same format as the app's)
         fix = {i: r["room"] for r in self.labels.get("ranges", []) for i in range(r["from"], r["to"] + 1)}
         for f in self.frames:  # zones fixed in the app's review screen win over the live taps
             f["room"] = fix.get(f["i"], f["room"])
@@ -51,7 +52,8 @@ class Export:
 
     def tags(self):
         """Objects the user labelled under the crosshair: [{i, label, uv, room}]. The review screen's list wins."""
-        return clean_tags(self.labels["tags"] if "tags" in self.labels else [e for e in self.events() if e.get("event") == "tag"])
+        app = self.labels["tags"] if "tags" in self.labels else [e for e in self.events() if e.get("event") == "tag"]
+        return clean_tags((app if isinstance(app, list) else []) + self.extra_tags)
 
     def load(self, f, conf=2):
         w, h = f["depth_wh"]
@@ -76,5 +78,5 @@ def clean_tags(raw):
         uv = t.get("uv") or [0.5, 0.5]
         if not (isinstance(uv, list) and len(uv) == 2 and all(isinstance(v, (int, float)) and 0 <= v <= 1 for v in uv)):
             continue
-        out.append({"i": t["i"], "label": t["label"].strip()[:40], "uv": uv, "room": t.get("room")})
+        out.append({"i": t["i"], "label": t["label"].strip()[:40], "uv": uv, "room": t.get("room"), "web": bool(t.get("web"))})
     return out

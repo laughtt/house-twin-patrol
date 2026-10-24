@@ -178,8 +178,12 @@ def tagged(ex, frames, sc, walls, cands):
         near = [c for c in cands if np.all(p[:2] > c["lo"] - 0.3) and np.all(p[:2] < c["hi"] + 0.3)]
         if near:
             c = min(near, key=lambda c: np.hypot(*(np.array(c["center"]) - p[:2])))
-            if c["source"] != "user":
+            if label == "not a landmark":
+                c["removed"] = True
+            elif c["source"] != "user" or t.get("web"):  # a fix made on the results page wins over the app's tag
                 c.update(label=label, source="user")
+            continue
+        if label == "not a landmark":
             continue
         rw, rh = f["rgb_wh"]
         box = [(u - 0.12) * rw, (v - 0.12) * rh, (u + 0.12) * rw, (v + 0.12) * rh]

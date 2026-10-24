@@ -21,10 +21,12 @@ from twin.landmarks import upright_detect, zone_at  # noqa: E402,F401 - zone_at:
 from twin.scan_io import Export  # noqa: E402
 
 
-def build(src, out=None, detect_fn=upright_detect, every=2, extra_markers=None, use_model=True):
+def build(src, out=None, detect_fn=upright_detect, every=2, extra_markers=None, use_model=True, extra_tags=None):
     tm, tic = {}, time.time()
     lap = lambda k: tm.__setitem__(k, time.time() - tic - sum(tm.values()))  # noqa: E731
     ex = Export(src)
+    if extra_tags:
+        ex.extra_tags = [{**t, "web": True} for t in json.loads(Path(extra_tags).read_text())]
     frames = [f for f in ex.frames if f["tracking"] == "normal"]
     if not frames:
         raise ValueError(f"{ex.session}: no frame with normal tracking (more light, slower walk)")
@@ -37,7 +39,7 @@ def build(src, out=None, detect_fn=upright_detect, every=2, extra_markers=None, 
     lap("rooms_s")
     cands = lmk.tagged(ex, frames, sc, walls, lmk.candidates(ex, frames, sc, zones, walls, detect_fn, every))
     near_zone = lambda xy: any(r[0] - 0.3 <= xy[0] <= r[2] + 0.3 and r[1] - 0.3 <= xy[1] <= r[3] + 0.3 for z in zones for r in z["rects"])  # noqa: E731
-    cands = [c for c in cands if c["source"] == "user" or near_zone(c["center"])]  # not things seen through a window
+    cands = [c for c in cands if not c.get("removed") and (c["source"] == "user" or near_zone(c["center"]))]  # not seen through a window
     for c in cands:
         c["room"] = zone_at(zones, c["center"])
     crops = {c["id"]: lmk.crop(ex, frames, sc, c) for c in cands} if use_model else {}
@@ -54,9 +56,13 @@ def build(src, out=None, detect_fn=upright_detect, every=2, extra_markers=None, 
         markers = H.hand_markers(extra_markers, o, walls_full, objects)
     house = H.assemble(ex.session, sc, spaces, zones, walls_full, doors, objects, landmarks, markers, colours, o)
     (out / "house.json").write_text(json.dumps(house, indent=1))
+    def view(c):
+        k, (x0, y0, x1, y1) = c["best"]
+        rw, rh = frames[k]["rgb_wh"]
+        return {"i": frames[k]["i"], "uv": [round((x0 + x1) / 2 / rw, 4), round((y0 + y1) / 2 / rh, 4)]}
     (out / "candidates.json").write_text(json.dumps(
         [{k: v for k, v in c.items() if k not in ("pts", "lo", "hi", "best")} | {"center": [round(c["center"][0] - o[0], 3), round(c["center"][1] - o[1], 3)],
-                                                                             "decision": decisions[c["id"]]} for c in cands], indent=1))
+                                                                             "decision": decisions[c["id"]], "view": view(c)} for c in cands], indent=1))
     V = sc.V[sc.wall].copy()
     V[:, :2] -= o
     traj = sc.traj.copy()
