@@ -140,9 +140,19 @@ def cloud(path, sc, o):
     tn[:, :2] = tn[:, :2] @ sc.R2.T
     V = sc.V.copy()
     V[:, :2] -= o
-    ck, cinv = np.unique(vkey(V, 0.05), return_inverse=True)
-    _, (cc,) = means(cinv, len(ck), sc.C)
-    j = np.clip(np.searchsorted(ck, vkey(tp, 0.05)), 0, len(ck) - 1)
-    rgb = np.where((ck[j] == vkey(tp, 0.05))[:, None], cc[j][:, ::-1] / 255, 0.6)
+    rgb, miss = np.full((len(tp), 3), 0.6), np.ones(len(tp), bool)
+    for vox in (0.05, 0.1, 0.2):  # colour of the voxel there, else of the 10 cm / 20 cm block around it
+        ck, cinv = np.unique(vkey(V, vox), return_inverse=True)
+        _, (cc,) = means(cinv, len(ck), sc.C)
+        q = vkey(tp[miss], vox)
+        j = np.clip(np.searchsorted(ck, q), 0, len(ck) - 1)
+        hit = ck[j] == q
+        idx = np.nonzero(miss)[0][hit]
+        rgb[idx], miss[idx] = cc[j[hit]][:, ::-1] / 255, False
     cv.savePointCloud(str(path), *(a.astype(np.float32).reshape(-1, 1, 3) for a in (tp, tn, rgb)))
+    # the same points for a web viewer: header (lo xyz float32, count uint32), xyz in cm above lo (uint16), rgb (uint8)
+    lo = tp.min(0)
+    with open(path.with_suffix(".bin"), "wb") as f:
+        f.write(np.r_[lo].astype(np.float32).tobytes() + np.uint32(len(tp)).tobytes())
+        f.write(np.round((tp - lo) * 100).clip(0, 65535).astype(np.uint16).tobytes() + (rgb * 255).astype(np.uint8).tobytes())
     return tp

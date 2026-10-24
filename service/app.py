@@ -225,9 +225,14 @@ async def lidar_save_tags(session: str, request: Request, x_api_key: str = Heade
 @app.get("/lidar/file")
 def lidar_file(session: str, name: str, x_api_key: str = Header("")):
     check(x_api_key)
-    if name not in {"top.png", "house.json", "report.json", "candidates.json"}:
+    if name not in {"top.png", "house.json", "report.json", "candidates.json", "cloud.bin"}:
         raise HTTPException(400, "bad name")
     return FileResponse(session_dir(session) / "house" / name)
+
+
+@app.get("/lidar/3d")
+def lidar_3d():
+    return FileResponse(ROOT / "static/house3d.html", headers={"Cache-Control": "no-cache"})
 
 
 def session_dir(session: str, room: str = "x"):
