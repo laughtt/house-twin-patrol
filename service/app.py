@@ -34,6 +34,7 @@ detector = cv.aruco.ArucoDetector(
 )
 app = FastAPI()
 job = None  # one v0 measurement at a time (t4g.small has 1.8 GB)
+build = None  # one LiDAR house build at a time
 
 
 def check(key: str):
@@ -96,7 +97,71 @@ async def upload(request: Request, session: str, room: str, ext: str = "mp4", se
     with open(folder / "manifest.jsonl", "a") as f:
         f.write(json.dumps({"t": time.time(), "room": room, "file": path.name, "bytes": size,
                             "seen": seen, "ua": request.headers.get("user-agent")}) + "\n")
+    if room == "lidar" and ext == "zip":  # the house builds itself: no person or Claude Code in the loop
+        try:
+            start_build(session)
+        except HTTPException:  # another build is running: Build again from /lidar
+            pass
     return {"ok": True, "bytes": size}
+
+
+def start_build(session):
+    """python -m twin build on the uploaded scan → uploads/<session>/house/ (house.json, top.png, report.json…)."""
+    global build
+    if build and build.poll() is None:
+        raise HTTPException(409, "busy building another house, try again in a minute")
+    folder = UPLOADS / session
+    (folder / "house").mkdir(exist_ok=True)
+    (folder / "house" / "report.json").unlink(missing_ok=True)
+    log = open(folder / "build.log", "w")
+    build = subprocess.Popen(["nice", "-n", "10", sys.executable, "-m", "twin", "build", str(folder / "lidar.zip"), "--out", str(folder / "house")],
+                             cwd=ROOT.parent, stdout=log, stderr=subprocess.STDOUT)
+    build.session = session
+
+
+@app.get("/lidar")
+def lidar_page():
+    return FileResponse(ROOT / "static/lidar.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/lidar/sessions")
+def lidar_sessions(x_api_key: str = Header("")):
+    check(x_api_key)
+    return sorted((p.parent.name for p in UPLOADS.glob("*/lidar.zip")), reverse=True)
+
+
+@app.get("/lidar/status")
+def lidar_status(session: str, x_api_key: str = Header("")):
+    check(x_api_key)
+    folder = session_dir(session)
+    if not (folder / "lidar.zip").exists():
+        raise HTTPException(404, "no LiDAR scan in this session")
+    out = folder / "house"
+    if (out / "report.json").exists():
+        house = json.loads((out / "house.json").read_text())
+        return {"state": "done", "report": json.loads((out / "report.json").read_text()), "landmarks": house["landmarks"],
+                "candidates": json.loads((out / "candidates.json").read_text())}
+    if build and build.poll() is None and build.session == session:
+        return {"state": "building"}
+    log = (folder / "build.log").read_text()[-1500:] if (folder / "build.log").exists() else ""
+    return {"state": "failed" if log else "not built", "log": log}
+
+
+@app.post("/lidar/build")
+def lidar_build(session: str, x_api_key: str = Header("")):
+    check(x_api_key)
+    if not (session_dir(session) / "lidar.zip").exists():
+        raise HTTPException(404, "no LiDAR scan in this session")
+    start_build(session)
+    return {"ok": True}
+
+
+@app.get("/lidar/file")
+def lidar_file(session: str, name: str, x_api_key: str = Header("")):
+    check(x_api_key)
+    if name not in {"top.png", "house.json", "report.json", "candidates.json"}:
+        raise HTTPException(400, "bad name")
+    return FileResponse(session_dir(session) / "house" / name)
 
 
 def session_dir(session: str, room: str = "x"):

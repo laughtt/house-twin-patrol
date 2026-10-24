@@ -13,7 +13,7 @@ game.adtomic.co {
 		issuer acme
 	}
 	request_body {
-		max_size 300MB
+		max_size 600MB
 	}
 	header {
 		Strict-Transport-Security "max-age=31536000"

@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>House Builds</title>
+<style>
+:root{--bg:#f6f5f1;--fg:#1c1b19;--muted:#6b6862;--card:#fff;--line:#e2dfd8;--accent:#1f6feb;--ok:#1a7f37;--warn:#b35900;--bad:#c62828}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121211;--fg:#eceae4;--muted:#9a978f;--card:#1d1c1a;--line:#33312d;--accent:#3b82f6;--ok:#2ea043;--warn:#d9822b;--bad:#e5484d}}
+:root[data-theme="dark"]{--bg:#121211;--fg:#eceae4;--muted:#9a978f;--card:#1d1c1a;--line:#33312d;--accent:#3b82f6;--ok:#2ea043;--warn:#d9822b;--bad:#e5484d}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,sans-serif}
+main{max-width:720px;margin:0 auto;padding:16px}
+h1{font-size:1.4rem;margin:8px 0 4px}
+h2{font-size:1.15rem;margin:0 0 6px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}
+.big{font-size:1.9rem;font-weight:700;margin:4px 0}
+.muted{color:var(--muted);font-size:.9rem}
+.row{display:flex;gap:8px;align-items:center;margin:8px 0}
+input{font:inherit;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--fg);min-width:0;flex:1}
+button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:11px 14px;background:var(--accent);color:#fff}
+button.ghost{background:transparent;color:var(--accent);border:1px solid var(--line)}
+table{border-collapse:collapse;width:100%;font-size:.88rem}
+td,th{border-bottom:1px solid var(--line);padding:6px 4px;text-align:left;vertical-align:top}
+.imgs{display:flex;gap:6px;overflow-x:auto;padding-bottom:4px}
+.imgs img{height:120px;border-radius:6px;border:1px solid var(--line)}
+.ok{color:var(--ok)}.warn{color:var(--warn)}.bad{color:var(--bad)}
+.tbl{overflow-x:auto}
+ul{margin:6px 0;padding-left:20px}
+</style>
+</head>
+<body>
+<main>
+<h1>House builds</h1>
+<p class="muted">Each LiDAR upload builds itself on the server: OpenCV 5 fuses the walk into walls, doors and furniture, the object
+detector finds landmarks, and a small model (Claude Haiku) checks which ones the duck can trust. No stickers needed.</p>
+<div class="card row"><select id="sid" aria-label="Scan" onchange="load()" style="font:inherit;padding:10px;border-radius:8px;flex:1;min-width:0"></select><button class="ghost" onclick="rebuild()">Build again</button></div>
+<div id="out"></div>
+</main>
+<script>
+<script>
+const $ = id => document.getElementById(id);
+const store = {get: k => { try { return JSON.parse(localStorage.getItem(k)) } catch { return null } },
+               set: (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)) } catch {} }};
+const q = new URLSearchParams(location.search);
+if (q.get('k')) store.set('key', q.get('k'));
+const KEY = q.get('k') || store.get('key') || '';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'})[c]);
+const api = (path, opts = {}) => fetch(path, {...opts, headers: {'X-API-Key': KEY}}).then(async r => r.ok ? r : Promise.reject(new Error((await r.json().catch(() => ({}))).detail || r.status)));
+let timer;
+
+async function start() {
+  if (!KEY) return $('out').innerHTML = '<div class="card bad">Missing access key: open the full link once (it ends in ?k=…).</div>';
+  const ids = await (await api('/lidar/sessions')).json();
+  $('sid').innerHTML = ids.map(i => `<option>${esc(i)}</option>`).join('');
+  if (q.get('s') && ids.includes(q.get('s'))) $('sid').value = q.get('s');
+  ids.length ? load() : $('out').innerHTML = '<div class="card">No LiDAR uploads yet: record with the Twin LiDAR app and tap Upload.</div>';
+}
+
+async function load() {
+  clearTimeout(timer);
+  const s = $('sid').value;
+  try {
+    const r = await (await api(`/lidar/status?session=${encodeURIComponent(s)}`)).json();
+    if (r.state === 'building') { $('out').innerHTML = '<div class="card">Building the house… (about a minute)</div>'; timer = setTimeout(load, 4000); return; }
+    if (r.state !== 'done') { $('out').innerHTML = `<div class="card"><b class="${r.state === 'failed' ? 'bad' : ''}">${esc(r.state)}</b><pre style="white-space:pre-wrap;font-size:.75rem">${esc(r.log)}</pre></div>`; return; }
+    $('out').innerHTML = card(r);
+    const img = await (await api(`/lidar/file?session=${encodeURIComponent(s)}&name=top.png`)).blob();
+    $('top').src = URL.createObjectURL(img);
+  } catch (e) { $('out').innerHTML = `<div class="card bad">${esc(e.message)}</div>`; }
+}
+
+async function rebuild() {
+  try { await api(`/lidar/build?session=${encodeURIComponent($('sid').value)}`, {method: 'POST'}); load(); }
+  catch (e) { alert(e.message); }
+}
+
+function card(r) {
+  const rep = r.report, cur = rep.curate || {};
+  const spaces = Object.entries(rep.spaces).map(([n, v]) => `<li>${esc(n)}: ${v.w_m} × ${v.l_m} m (${v.area_m2} m²)</li>`).join('');
+  const rows = r.candidates.map(c => {
+    const d = c.decision, kept = d.keep && d.mobility !== 'ignore' && !c.merged;
+    return `<tr><td>${esc(c.source === 'user' ? c.label : d.label)}${c.source === 'user' ? ' <span class="muted">(your tag)</span>' : ''}</td>
+      <td>${esc(c.cls || '–')}</td><td class="${kept ? 'ok' : 'muted'}">${kept ? esc(d.mobility) : (d.merge_into ? 'merged → ' + esc(d.merge_into) : 'dropped')}</td>
+      <td>${c.views} / ${c.low_views}</td><td class="muted">${esc(d.reason)}</td></tr>`;
+  }).join('');
+  return `<div class="card"><h2>${esc(rep.session)}</h2>
+    <div class="muted">${rep.frames_used} frames, ${rep.frames_low} at duck height · ${rep.doors} doors · ${rep.objects} furniture · ${rep.tags} tags</div>
+    <ul>${spaces}</ul><img id="top" alt="Top view of the house" style="width:100%;border-radius:8px;border:1px solid var(--line)">
+    <div class="muted">Stars = landmarks (bigger = trusted more, bold = your tag). Thick black path = duck-height frames.</div></div>
+    <div class="card"><h2>Landmarks: ${rep.landmarks} kept of ${rep.landmark_candidates}</h2>
+    <div class="muted">Checked by ${esc(cur.by || '?')}${cur.answered ? ` (${esc(cur.answered)} answered)` : ''}${cur.error ? ` · <span class="warn">model unavailable: ${esc(cur.error)}</span>` : ''}</div>
+    ${(cur.warnings || []).length ? `<ul class="warn">${cur.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}
+    <div class="tbl"><table><tr><th>Landmark</th><th>Detector</th><th>Trust</th><th>Views / low</th><th>Why</th></tr>${rows}</table></div></div>`;
+}
+start();
+</script>
+</body>
+</html>
