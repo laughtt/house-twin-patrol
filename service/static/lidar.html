@@ -112,9 +112,7 @@ function card(r) {
     <div class="muted">${rep.frames_used} frames, ${rep.frames_low} at duck height · ${rep.doors} doors · ${rep.objects} furniture · ${rep.tags} tags</div>
     <ul>${spaces}</ul><img id="top" alt="Top view of the house" style="width:100%;border-radius:8px;border:1px solid var(--line)">
     <div class="muted">Stars = landmarks (bigger = trusted more, bold = your tag). Thick black path = duck-height frames.</div>
-    <div class="row"><a href="/lidar/3d?s=${encodeURIComponent(rep.session)}"><button>View in 3D</button></a>
-      <a href="/lidar/how?s=${encodeURIComponent(rep.session)}"><button class="ghost">How this map was made</button></a>
-      <a href="/lidar/flow?s=${encodeURIComponent(rep.session)}"><button class="ghost">All modules in one row</button></a></div></div>
+    <div class="row"><a href="/lidar/3d?s=${encodeURIComponent(rep.session)}"><button>View in 3D</button></a></div></div>
     <div class="card"><h2>Landmarks: ${rep.landmarks} kept of ${rep.landmark_candidates}</h2>
     <div class="muted">Checked by ${esc(cur.by || '?')}${cur.answered ? ` (${esc(cur.answered)} answered)` : ''}${cur.error ? ` · <span class="warn">model unavailable: ${esc(cur.error)}</span>` : ''}</div>
     ${(cur.warnings || []).length ? `<ul class="warn">${cur.warnings.map(w => `<li>${esc(w)}</li>`).join('')}</ul>` : ''}

@@ -11,8 +11,8 @@ from pathlib import Path
 
 import cv2 as cv
 import numpy as np
-from fastapi import Depends, FastAPI, File, Header, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, RedirectResponse
 from pydantic import BaseModel
 
 from passwd import verify
@@ -25,21 +25,9 @@ APP_USER = os.environ.get("APP_USER", "demo")
 APP_PASSWORD_HASH = os.environ.get("APP_PASSWORD_HASH", "")  # python -m service.passwd; empty = login off
 TOKEN_SECRET = os.environ.get("TOKEN_SECRET", "")
 TOKEN_DAYS = 30
-MARKER_M = float(os.environ.get("MARKER_SIZE_M", "0.15"))
-HFOV_DEG = 66.0  # typical phone main lens; replaced by calib.yaml once the lens check is processed
 SAFE = re.compile(r"^[a-z0-9_-]{1,40}$")
 
 
-def corners_m(marker_id: int):
-    # the id tells the printed size: 10-29 filming/doorway 10 cm, 30-39 big far-wall 20 cm, rest 15 cm
-    size = 0.10 if 10 <= marker_id < 30 else 0.20 if 30 <= marker_id < 40 else MARKER_M
-    s = size / 2
-    return np.array([[-s, s, 0], [s, s, 0], [s, -s, 0], [-s, -s, 0]], np.float32)
-
-
-detector = cv.aruco.ArucoDetector(
-    cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_50), cv.aruco.DetectorParameters()
-)
 app = FastAPI()
 job = None  # one v0 measurement at a time (t4g.small has 1.8 GB)
 build = None  # one LiDAR house build at a time
@@ -91,40 +79,7 @@ def login(body: Login, request: Request):
 
 @app.get("/")
 def index():
-    return FileResponse(ROOT / "static/capture.html", headers={"Cache-Control": "no-cache"})
-
-
-@app.post("/perceive")
-async def perceive(frame: UploadFile = File(...), x_api_key: str = Depends(credential)):
-    check(x_api_key)
-    t0 = time.perf_counter()
-    img = cv.imdecode(np.frombuffer(await frame.read(), np.uint8), cv.IMREAD_GRAYSCALE)
-    t1 = time.perf_counter()
-    corners, ids, _ = detector.detectMarkers(img)
-    t2 = time.perf_counter()
-    h, w = img.shape
-    f = w / 2 / np.tan(np.radians(HFOV_DEG) / 2)
-    K = np.array([[f, 0, w / 2], [0, f, h / 2], [0, 0, 1]])
-    markers = []
-    for c, i in zip(corners, [] if ids is None else ids.ravel()):
-        obj = corners_m(int(i))
-        _, rvec, tvec = cv.solvePnP(obj, c[0], K, None, flags=cv.SOLVEPNP_IPPE_SQUARE)
-        proj, _ = cv.projectPoints(obj, rvec, tvec, K, None)
-        x, _, z = tvec.ravel()
-        markers.append({
-            "id": int(i),
-            "dist_m": round(float(np.linalg.norm(tvec)), 2),
-            "bearing_deg": round(float(np.degrees(np.arctan2(x, z))), 1),
-            "reproj_px": round(float(np.abs(proj.reshape(-1, 2) - c[0]).mean()), 2),
-            "corners": c[0].round(1).tolist(),
-        })
-    t3 = time.perf_counter()
-    ms = lambda a, b: round((b - a) * 1000, 1)
-    return {
-        "markers": markers, "pose": None, "obstacle": None, "decision": None, "ask_human": None,
-        "cv_version": cv.__version__,
-        "latency_ms": {"decode": ms(t0, t1), "aruco": ms(t1, t2), "pnp": ms(t2, t3), "total": ms(t0, t3)},
-    }
+    return RedirectResponse("/lidar")
 
 
 @app.post("/upload")
@@ -328,21 +283,6 @@ def lidar_capture(session: str, x_api_key: str = Depends(credential)):
     return {"frames": frames, "events": [{k: e.get(k) for k in ("t", "event", "room", "label")} for e in ex.events()],
             "tags": ex.tags(), "score": meta.get("score"), "format": meta.get("format", 1),
             "low_h": __import__("twin").CFG["landmarks"]["low_h"], "mb": round((session_dir(session) / "lidar.zip").stat().st_size / 1e6)}
-
-
-@app.get("/lidar/flow")
-def lidar_flow():
-    return FileResponse(ROOT / "static/flow.html", headers={"Cache-Control": "no-cache"})
-
-
-@app.get("/lidar/mission")
-def lidar_mission():
-    return FileResponse(ROOT / "static/mission.html", headers={"Cache-Control": "no-cache"})
-
-
-@app.get("/lidar/how")
-def lidar_how():
-    return FileResponse(ROOT / "static/how.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/lidar/3d")
