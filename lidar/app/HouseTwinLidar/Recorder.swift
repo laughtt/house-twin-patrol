@@ -47,7 +47,8 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     @Published var sinceZone = 0.0
     @Published var scoring = false
     @Published var uploading = false
-    @Published var build: [String: Any]?
+    @Published var sent = 0.0
+    @Published var uploaded = false
     private(set) var duration = 0.0
     let veil = AnchorEntity(.camera)
     private(set) var dir: URL!
@@ -67,12 +68,12 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     private var stillSince: TimeInterval?, lowSince: TimeInterval = 0, lowSector: Int?
     private var forceNext = false, tagShot: [String: Any]?, tagLabel: String?
     private var walkRef: SIMD2<Float>?
-    private var poller: Task<Void, Never>?
 
     func run() {
         guard supported else { return }
-        view.session.delegate = self
         view.session.run(config)
+        guard view.session.delegate == nil else { return }  // back from another tab: the veil is already set up
+        view.session.delegate = self
         guard ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) else { return }
         // scanned surfaces (the ARKit mesh) occlude a dark plane 5 m ahead, so only un-scanned areas look dark
         view.environment.sceneUnderstanding.options.insert(.occlusion)
@@ -82,6 +83,10 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         plane.position.z = -5
         veil.addChild(plane)
         view.scene.addAnchor(veil)
+    }
+
+    func pause() {
+        if supported && !recording { view.session.pause() }
     }
 
     private var config: ARWorldTrackingConfiguration {
@@ -116,7 +121,7 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         events = handle("events.jsonl")
         frames = 0; bytes = 0; zip = nil; status = ""; t0 = now; last = 0
         walls = [:]; sectors = [:]; tags = []; forceNext = false; tagShot = nil
-        walked = [:]; sinceZone = 0; walkRef = nil; poller?.cancel(); build = nil
+        walked = [:]; sinceZone = 0; walkRef = nil; uploaded = false
         recording = true
         UIApplication.shared.isIdleTimerDisabled = true
         mark("room")
@@ -163,19 +168,19 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     func open(_ id: String) {
-        poller?.cancel(); build = nil
+        uploaded = false
         sessionID = id
         dir = docs.appendingPathComponent(id)
         let z = docs.appendingPathComponent(id + ".zip")
         zip = FileManager.default.fileExists(atPath: z.path) ? z : nil
-        status = "Opened \(id)"
+        status = "Opened \(sessionTitle(id))"
         if zip == nil { save(nil, nil) }
     }
 
     func delete(_ id: String) {
         try? FileManager.default.removeItem(at: docs.appendingPathComponent(id))
         try? FileManager.default.removeItem(at: docs.appendingPathComponent(id + ".zip"))
-        if id == sessionID { sessionID = ""; dir = nil; zip = nil; status = ""; poller?.cancel(); build = nil }
+        if id == sessionID { sessionID = ""; dir = nil; zip = nil; status = ""; uploaded = false }
     }
 
     func enter(_ name: String) {
@@ -268,15 +273,15 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
         }
     }
 
-    func upload(key: String) {
+    func upload() {
         guard let zip, !uploading else { return }
-        var url = URLComponents(string: "https://game.adtomic.co/upload")!
-        url.queryItems = [.init(name: "session", value: sessionID), .init(name: "room", value: "lidar"), .init(name: "ext", value: "zip")]
-        var req = URLRequest(url: url.url!, timeoutInterval: 900)
-        req.httpMethod = "POST"
-        req.setValue(key, forHTTPHeaderField: "X-API-Key")
+        var req = Auth.shared.request("/upload", ["session": sessionID, "room": "lidar", "ext": "zip"], method: "POST")
+        req.timeoutInterval = 900
         req.setValue("application/zip", forHTTPHeaderField: "Content-Type")
         uploading = true
+        uploaded = false
+        sent = 0
+        status = "Uploading…"
         UIApplication.shared.isIdleTimerDisabled = true  // a locked phone kills the upload
         let task = URLSession.shared.uploadTask(with: req, fromFile: zip) { [self] _, resp, err in
             let code = (resp as? HTTPURLResponse)?.statusCode ?? 0
@@ -284,42 +289,15 @@ final class Recorder: NSObject, ObservableObject, ARSessionDelegate {
                 progress = nil
                 uploading = false
                 UIApplication.shared.isIdleTimerDisabled = false
-                if err == nil && code == 200 { status = "Uploaded: building the house on the server…"; poll(key: key) }
-                else { status = "Upload failed — tap Upload to retry (\(err?.localizedDescription ?? "HTTP \(code)"))" }
+                if err == nil && code == 200 { uploaded = true; status = "Uploaded: your map is building" }
+                else if code == 401 { status = "Signed out: sign in and tap Upload again"; Auth.shared.signOut() }
+                else { status = "Upload failed: \(err.map { ApiError.from($0).localizedDescription } ?? "server error \(code)"). Tap Upload to retry." }
             }
         }
         progress = task.progress.observe(\.fractionCompleted) { [self] p, _ in
-            DispatchQueue.main.async { [self] in if uploading { status = "Uploading \(Int(p.fractionCompleted * 100)) %" } }
+            DispatchQueue.main.async { [self] in if uploading { sent = p.fractionCompleted; status = "Uploading \(Int(p.fractionCompleted * 100)) %" } }
         }
         task.resume()
-    }
-
-    /// Server build status every 5 s for up to 10 min. `once`: a reopened session, stop unless the server is building it.
-    func poll(key: String, once: Bool = false) {
-        poller?.cancel(); build = nil
-        var url = URLComponents(string: "https://game.adtomic.co/lidar/status")!
-        url.queryItems = [.init(name: "session", value: sessionID)]
-        var req = URLRequest(url: url.url!, timeoutInterval: 30)
-        req.setValue(key, forHTTPHeaderField: "X-API-Key")
-        poller = Task { @MainActor [self] in
-            for _ in 0..<120 {
-                let data = try? await URLSession.shared.data(for: req).0
-                guard !Task.isCancelled else { return }
-                let json = data.flatMap { (try? JSONSerialization.jsonObject(with: $0)) as? [String: Any] }
-                let state = json?["state"] as? String
-                if state == "done" || state == "failed" {
-                    build = json
-                    status = state == "done" ? "House built" : "Build failed on the server"
-                    return
-                }
-                if once && state != "building" { return }
-                status = "Building the house on the server…"
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
-                guard !Task.isCancelled else { return }
-            }
-            build = ["state": "building"]
-            status = "Still building after 10 min: open the results later"
-        }
     }
 
     /// Every 0.2 s: floor and camera height, motion over the last 0.2 s, hold-still ring and the per-zone checklist.

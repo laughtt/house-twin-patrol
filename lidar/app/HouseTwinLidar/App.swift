@@ -3,7 +3,89 @@ import SwiftUI
 
 @main
 struct HouseTwinLidarApp: App {
-    var body: some SwiftUI.Scene { WindowGroup { ContentView() } }
+    @StateObject var auth = Auth.shared
+    @StateObject var rec = Recorder()  // outlives a sign-out, so a recording is never lost
+
+    var body: some SwiftUI.Scene {
+        WindowGroup {
+            Group { if auth.token == nil { LoginView() } else { Main(rec: rec) } }
+                .environmentObject(auth)
+        }
+    }
+}
+
+struct Main: View {
+    @ObservedObject var rec: Recorder
+    @StateObject var maps = Maps()
+    @AppStorage("zones") var zones = "Kitchen,Living room,Dining,Bedroom,Bathroom,Hallway"
+    @AppStorage("tagLabels") var tagLabels = "Fridge,Oven,Stove,Sink,Sofa,Bed,TV,Table,Toilet,Washer,Wardrobe,Door,Window,Plant,Other"
+    @AppStorage("veil") var veil = true
+    @State var tab = 0
+    @Environment(\.scenePhase) var phase
+
+    var body: some View {
+        TabView(selection: $tab) {
+            ContentView(rec: rec, zones: zones, tagLabels: tagLabels, veil: veil) { tab = 1 }
+                .tabItem { Label("Record", systemImage: "camera.viewfinder") }.tag(0)
+            MapsView(maps: maps, rec: rec)
+                .tabItem { Label("My maps", systemImage: "map") }.tag(1)
+            Settings(zones: $zones, veil: $veil, tagLabels: $tagLabels)
+                .tabItem { Label("Settings", systemImage: "gearshape") }.tag(2)
+        }
+        .task(id: maps.busy) {
+            if !maps.loaded { await maps.refresh() }
+            while maps.busy && !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                await maps.refresh()
+            }
+        }
+        .onChange(of: rec.uploaded) { if $0 { maps.askToNotify(); Task { await maps.refresh() } } }
+        .onChange(of: phase) { if $0 == .active { Task { await maps.refresh() } } }
+    }
+}
+
+struct Fill: ButtonStyle {
+    var color: Color = .accentColor
+    var text: Color = .white
+    var height: CGFloat = 48
+    @Environment(\.isEnabled) private var enabled
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.headline).multilineTextAlignment(.center)
+            .padding(.horizontal, 10).frame(maxWidth: .infinity, minHeight: height)
+            .foregroundColor(text).background(color, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .opacity(enabled ? configuration.isPressed ? 0.75 : 1 : 0.45)
+    }
+}
+
+extension View {
+    func card() -> some View {
+        padding(12).frame(maxWidth: .infinity, alignment: .leading)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    func banner(_ color: Color) -> some View {
+        font(.callout.weight(.semibold)).padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            .background(color, in: RoundedRectangle(cornerRadius: 12, style: .continuous)).foregroundColor(.black)
+    }
+}
+
+/// An empty or error state: big symbol, title, one line of help, optional retry.
+struct Empty: View {
+    let icon: String
+    let title: String
+    let text: String
+    var retry: (() -> Void)?
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: icon).font(.largeTitle).imageScale(.large).foregroundStyle(.secondary).accessibilityHidden(true)
+            Text(title).font(.title3.bold())
+            Text(text).font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            if let retry { Button("Try again", action: retry).buttonStyle(.borderedProminent).padding(.top, 4) }
+        }
+        .padding(32).frame(maxWidth: 420)
+    }
 }
 
 struct Preview: UIViewRepresentable {
@@ -13,117 +95,123 @@ struct Preview: UIViewRepresentable {
 }
 
 struct ContentView: View {
-    @StateObject var rec = Recorder()
-    @AppStorage("zones") var zones = "Kitchen,Living room,Dining,Bedroom,Bathroom,Hallway"
-    @AppStorage("apiKey") var key = ""
-    @AppStorage("veil") var veil = true
-    @AppStorage("tagLabels") var tagLabels = "Fridge,Oven,Stove,Sink,Sofa,Bed,TV,Table,Toilet,Washer,Wardrobe,Door,Window,Plant,Other"
-    @State var settings = false
+    @ObservedObject var rec: Recorder
+    let zones: String
+    let tagLabels: String
+    let veil: Bool
+    let showMaps: () -> Void
     @State var sessions = false
     @State var tagging = false
 
     var body: some View {
         if !rec.supported {
-            Text("This device has no LiDAR depth (ARKit sceneDepth is not supported).\nUse an iPhone 12 Pro or newer Pro model, or an iPad Pro.")
-                .multilineTextAlignment(.center).padding()
+            VStack {
+                Empty(icon: "camera.metering.unknown", title: "No LiDAR on this device",
+                      text: "Recording needs an iPhone 12 Pro or newer Pro model, or an iPad Pro. You can still open your maps.")
+                Button("Open My maps", action: showMaps).buttonStyle(Fill()).frame(maxWidth: 320)
+            }
         } else {
-            ZStack {
-                Preview(view: rec.view).ignoresSafeArea()
-                if rec.recording {
-                    Color.clear.overlay {
-                        ZStack {
-                            Circle().stroke(.white.opacity(0.3), lineWidth: 4)
-                            Circle().trim(from: 0, to: rec.hold).stroke(rec.hold >= 1 ? Color.green : Color.white, style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                                .rotationEffect(.degrees(-90)).animation(.linear(duration: 0.2), value: rec.hold)
-                            Image(systemName: "plus").font(.title2.weight(.light))
-                        }
-                        .foregroundColor(.white).frame(width: 54, height: 54).shadow(radius: 2)
-                    }
-                    .ignoresSafeArea().allowsHitTesting(false)
+            NavigationStack { recorder.toolbar(.hidden, for: .navigationBar) }
+                .toolbar(rec.recording ? .hidden : .visible, for: .tabBar)
+        }
+    }
+
+    var recorder: some View {
+        ZStack {
+            Preview(view: rec.view).ignoresSafeArea()
+            if rec.recording {
+                ZStack {
+                    Circle().stroke(.white.opacity(0.3), lineWidth: 4)
+                    Circle().trim(from: 0, to: rec.hold).stroke(rec.hold >= 1 ? Color.green : Color.white, style: StrokeStyle(lineWidth: 4, lineCap: .round))
+                        .rotationEffect(.degrees(-90)).animation(.linear(duration: 0.2), value: rec.hold)
+                    Image(systemName: "plus").font(.title2.weight(.light))
                 }
-                VStack(spacing: 10) {
-                    HStack(alignment: .top) {
-                        VStack(alignment: .leading) {
-                            Text("\(rec.frames) frames · \(rec.bytes / 1_000_000) MB")
-                            Text("Room: \(rec.room)")
-                            Text("Tracking: \(rec.tracking)")
-                            Text(rec.height.map { String(format: "Height %.2f m", $0) } ?? "Height: finding the floor…")
-                            if veil { Text("Scanned: \(Int(rec.area)) m²") }
-                        }
-                        .font(.headline.monospacedDigit())
-                        Spacer()
-                        Button { sessions = true } label: { Image(systemName: "folder.fill").font(.title2) }
-                            .disabled(rec.recording).padding(.trailing, 8)
-                        Button { settings = true } label: { Image(systemName: "gearshape.fill").font(.title2) }
-                            .disabled(rec.recording)
+                .foregroundColor(.white).frame(width: 54, height: 54).shadow(radius: 2)
+                .ignoresSafeArea().allowsHitTesting(false).accessibilityHidden(true)
+            }
+            VStack(spacing: 10) {
+                HStack(alignment: .top) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label(rec.room, systemImage: "door.left.hand.open").font(.headline)
+                        Text("\(rec.frames) frames · \(rec.bytes / 1_000_000) MB")
+                        Text(rec.height.map { String(format: "Height %.2f m", $0) } ?? "Finding the floor…")
+                        if veil { Text("Scanned \(Int(rec.area)) m²") }
                     }
-                    .padding(10).background(.black.opacity(0.5)).foregroundColor(.white).cornerRadius(10)
-                    if rec.tracking != "normal" {
-                        Text("Tracking limited: slow down, add light, point at textured surfaces")
-                            .font(.callout.bold()).padding(8).frame(maxWidth: .infinity)
-                            .background(.orange).foregroundColor(.black).cornerRadius(8)
-                    }
-                    if rec.recording { checklist }
-                    if let nudge {
-                        Text(nudge).font(.callout.bold()).padding(8).frame(maxWidth: .infinity)
-                            .background(.cyan).foregroundColor(.black).cornerRadius(8)
-                    } else if rec.recording && veil {
-                        Text(rec.growth > 0.3 ? "New surfaces lighting up: keep sweeping slowly"
-                                              : "Nothing new here: aim at the dark parts or move on")
-                            .font(.callout.bold()).padding(6).background(.black.opacity(0.5)).foregroundColor(.white).cornerRadius(8)
-                    }
-                    if rec.bytes > 500_000_000 {
-                        Text("Over 500 MB: stop soon (upload limit 600 MB)").font(.callout.bold())
-                            .padding(8).background(.red).foregroundColor(.white).cornerRadius(8)
-                    }
+                    .font(.subheadline.monospacedDigit())
                     Spacer()
-                    LazyVGrid(columns: [GridItem(), GridItem(), GridItem()]) {
-                        ForEach(Self.items(zones), id: \.self) { z in
-                            Button(z) { rec.enter(z) }
-                                .frame(maxWidth: .infinity, minHeight: 44)
-                                .background(z == rec.room ? Color.blue : Color.black.opacity(0.55))
-                                .foregroundColor(.white).cornerRadius(8)
-                        }
-                    }
-                    if rec.recording {
-                        HStack {
-                            Button("Doorway") { rec.mark("doorway") }
-                                .frame(maxWidth: .infinity, minHeight: 40).background(.yellow).foregroundColor(.black).cornerRadius(8)
-                            Button { rec.tag(); tagging = true } label: { Label("Tag", systemImage: "scope") }
-                                .frame(maxWidth: .infinity, minHeight: 40).background(.mint).foregroundColor(.black).cornerRadius(8)
-                        }
-                    }
-                    Button(rec.recording ? "Stop" : "Start") { rec.recording ? rec.stop() : rec.start() }
-                        .font(.largeTitle.bold()).frame(maxWidth: .infinity, minHeight: 80)
-                        .background(rec.recording ? Color.red : Color.green).foregroundColor(.white).cornerRadius(16)
-                    if let zip = rec.zip, !rec.recording {
-                        HStack {
-                            Button { rec.reviewing = true } label: { Label("Zones & tags", systemImage: "slider.horizontal.below.rectangle") }
-                                .frame(maxWidth: .infinity, minHeight: 44).background(.white).cornerRadius(8)
-                            ShareLink(item: zip) { Label("Share / AirDrop", systemImage: "square.and.arrow.up") }
-                                .frame(maxWidth: .infinity, minHeight: 44).background(.white).cornerRadius(8)
-                        }
-                        Button { key.isEmpty ? settings = true : rec.upload(key: key) } label: {
-                            Label(key.isEmpty ? "Upload — add your link in ⚙️ first" : "Upload", systemImage: "icloud.and.arrow.up")
-                        }
-                        .frame(maxWidth: .infinity, minHeight: 44).background(.white).cornerRadius(8).disabled(rec.uploading)
-                    }
-                    if !rec.status.isEmpty {
-                        Text(rec.status).font(.callout).padding(6).background(.black.opacity(0.6)).foregroundColor(.white).cornerRadius(6)
-                    }
-                    if let b = rec.build, !rec.recording { house(b) }
+                    Button { sessions = true } label: { Image(systemName: "folder").font(.title3).frame(width: 44, height: 44) }
+                        .disabled(rec.recording).accessibilityLabel("Recordings on this phone")
                 }
-                .padding()
+                .card()
+                if rec.tracking != "normal" {
+                    Label("Tracking limited: slow down, add light, point at textured surfaces", systemImage: "exclamationmark.triangle.fill").banner(.orange)
+                }
+                if rec.recording { checklist }
+                if let nudge {
+                    Label(nudge, systemImage: "lightbulb.fill").banner(.cyan)
+                } else if rec.recording && veil {
+                    Text(rec.growth > 0.3 ? "New surfaces lighting up: keep sweeping slowly" : "Nothing new here: aim at the dark parts or move on")
+                        .font(.callout.weight(.semibold)).padding(8).background(.black.opacity(0.5), in: Capsule())
+                }
+                if rec.bytes > 500_000_000 {
+                    Label("Over 500 MB: stop soon (upload limit 600 MB)", systemImage: "externaldrive.fill.badge.exclamationmark").banner(.red)
+                }
+                Spacer()
+                LazyVGrid(columns: [GridItem(), GridItem(), GridItem()]) {
+                    ForEach(Self.items(zones), id: \.self) { z in
+                        Button(z) { rec.enter(z) }
+                            .buttonStyle(Fill(color: z == rec.room ? .accentColor : .black.opacity(0.55), height: 44))
+                            .accessibilityAddTraits(z == rec.room ? .isSelected : [])
+                    }
+                }
+                if rec.recording {
+                    HStack {
+                        Button { rec.mark("doorway") } label: { Label("Doorway", systemImage: "door.left.hand.closed") }
+                            .buttonStyle(Fill(color: .yellow, text: .black, height: 44))
+                        Button { rec.tag(); tagging = true } label: { Label("Tag", systemImage: "scope") }
+                            .buttonStyle(Fill(color: .mint, text: .black, height: 44))
+                    }
+                }
+                Button { rec.recording ? rec.stop() : rec.start() } label: {
+                    Label(rec.recording ? "Stop" : "Start recording", systemImage: rec.recording ? "stop.fill" : "record.circle").font(.title2.bold())
+                }
+                .buttonStyle(Fill(color: rec.recording ? .red : .accentColor, height: 64))
+                if let zip = rec.zip, !rec.recording {
+                    HStack {
+                        Button { rec.reviewing = true } label: { Label("Review", systemImage: "slider.horizontal.below.rectangle") }
+                            .buttonStyle(Fill(color: .white, text: .black))
+                        Button { rec.upload() } label: { Label("Upload", systemImage: "icloud.and.arrow.up") }
+                            .buttonStyle(Fill()).disabled(rec.uploading)
+                        Menu {
+                            ShareLink(item: zip) { Label("Share / AirDrop the recording", systemImage: "square.and.arrow.up") }
+                        } label: {
+                            Image(systemName: "ellipsis").font(.headline).frame(width: 48, height: 48)
+                                .background(.white, in: RoundedRectangle(cornerRadius: 14, style: .continuous)).foregroundColor(.black)
+                        }
+                        .accessibilityLabel("More")
+                    }
+                }
+                if !rec.status.isEmpty {
+                    HStack {
+                        if rec.uploading { ProgressView(value: rec.sent).frame(width: 60) }
+                        Text(rec.status).font(.callout)
+                        Spacer()
+                        if rec.uploaded { Button("Watch it build", action: showMaps).font(.callout.bold()) }
+                    }
+                    .card()
+                }
             }
-            .overlay { if rec.scoring { ScoreCard(rec: rec) } }
-            .onAppear { rec.run(); rec.veil.isEnabled = veil }
-            .onChange(of: veil) { rec.veil.isEnabled = $0 }
-            .sheet(isPresented: $settings) { Settings(zones: $zones, key: $key, veil: $veil, tagLabels: $tagLabels) }
-            .sheet(isPresented: $sessions) { Sessions(rec: rec) }
-            .sheet(isPresented: $tagging) { LabelGrid(labels: Self.items(tagLabels)) { rec.label($0); tagging = false } }
-            .fullScreenCover(isPresented: $rec.reviewing) {
-                Review(dir: rec.dir, zones: Self.items(zones), labels: Self.items(tagLabels)) { rec.reviewing = false; rec.save($0, $1) }
-            }
+            .padding()
+        }
+        .environment(\.colorScheme, .dark)
+        .overlay { if rec.scoring { ScoreCard(rec: rec) } }
+        .onAppear { rec.run(); rec.veil.isEnabled = veil }
+        .onDisappear { rec.pause() }
+        .onChange(of: veil) { rec.veil.isEnabled = $0 }
+        .sheet(isPresented: $sessions) { Sessions(rec: rec) }
+        .sheet(isPresented: $tagging) { LabelGrid(labels: Self.items(tagLabels)) { rec.label($0); tagging = false } }
+        .fullScreenCover(isPresented: $rec.reviewing) {
+            Review(dir: rec.dir, zones: Self.items(zones), labels: Self.items(tagLabels)) { rec.reviewing = false; rec.save($0, $1) }
         }
     }
 
@@ -161,47 +249,7 @@ struct ContentView: View {
             .font(.subheadline.bold().monospacedDigit())
             Text(tip).font(.caption)
         }
-        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-        .background(.black.opacity(0.5)).foregroundColor(.white).cornerRadius(10)
-    }
-
-    /// The server's build result for this session: rooms, counts, curator warnings and links to the web views.
-    func house(_ b: [String: Any]) -> some View {
-        let r = b["report"] as? [String: Any] ?? [:], curate = r["curate"] as? [String: Any]
-        let n = { (v: Any?) in (v as? Int).map(String.init) ?? (v as? [Any]).map { String($0.count) } ?? "–" }
-        let spaces = (r["spaces"] as? [String: [String: Any]] ?? [:]).sorted { $0.key < $1.key }
-        let state = b["state"] as? String
-        let link = { (path: String) -> URL in
-            var c = URLComponents(string: "https://game.adtomic.co" + path)!
-            c.queryItems = [.init(name: "s", value: rec.sessionID), .init(name: "k", value: key)]
-            return c.url!
-        }
-        return VStack(alignment: .leading, spacing: 4) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(state == "done" ? "House built" : state == "failed" ? "Build failed" : "Still building on the server").font(.headline)
-                    if state == "failed" { Text(String((b["log"] as? String ?? "").suffix(400))).font(.caption.monospaced()) }
-                    ForEach(spaces, id: \.key) { name, s in
-                        Text(String(format: "%@  %.1f × %.1f m · %.0f m²", name, s["w_m"] as? Double ?? 0, s["l_m"] as? Double ?? 0, s["area_m2"] as? Double ?? 0))
-                    }
-                    if state == "done" {
-                        Text("Duck-height frames \(n(r["frames_low"])) · doors \(n(r["doors"])) · objects \(n(r["objects"]))")
-                        Text("Landmarks \(n(r["landmarks"] ?? b["landmarks"])) · candidates \(n(r["landmark_candidates"] ?? b["candidates"]))")
-                        if let by = curate?["by"] as? String { Text("Curated by \(by)").font(.caption) }
-                        ForEach((curate?["warnings"] as? [String] ?? []).prefix(3), id: \.self) { Text("⚠︎ " + $0).font(.caption).foregroundColor(.orange) }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: 220).fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Link(destination: link("/lidar")) { Label("Open results", systemImage: "safari") }
-                    .frame(maxWidth: .infinity, minHeight: 40).background(.white).foregroundColor(.blue).cornerRadius(8)
-                Link(destination: link("/lidar/3d")) { Label("View in 3D", systemImage: "cube") }
-                    .frame(maxWidth: .infinity, minHeight: 40).background(.white).foregroundColor(.blue).cornerRadius(8)
-            }
-        }
-        .font(.callout.monospacedDigit()).padding(8).background(.black.opacity(0.6)).foregroundColor(.white).cornerRadius(10)
+        .card()
     }
 
     static func items(_ list: String) -> [String] {
@@ -247,10 +295,8 @@ struct ScoreCard: View {
                 }
             }
             HStack {
-                Button("Skip") { rec.scoring = false; rec.save(nil, nil) }
-                    .frame(maxWidth: .infinity, minHeight: 48).background(.gray.opacity(0.4)).cornerRadius(10)
-                Button("Review zones & tags") { rec.scoring = false; rec.reviewing = true }.font(.headline)
-                    .frame(maxWidth: .infinity, minHeight: 48).background(.green).cornerRadius(10)
+                Button("Skip") { rec.scoring = false; rec.save(nil, nil) }.buttonStyle(Fill(color: .gray.opacity(0.4)))
+                Button("Review zones & tags") { rec.scoring = false; rec.reviewing = true }.buttonStyle(Fill())
             }
         }
         .foregroundColor(.white).padding()
@@ -282,8 +328,7 @@ struct LabelGrid: View {
             Text("What is it?").font(.headline)
             LazyVGrid(columns: [GridItem(), GridItem(), GridItem()]) {
                 ForEach(labels, id: \.self) { l in
-                    Button(l) { pick(l) }
-                        .frame(maxWidth: .infinity, minHeight: 44).background(.blue).foregroundColor(.white).cornerRadius(8)
+                    Button(l) { pick(l) }.buttonStyle(Fill(height: 44))
                 }
             }
             Button("Cancel") { pick(nil) }.frame(maxWidth: .infinity, minHeight: 44)
@@ -294,57 +339,53 @@ struct LabelGrid: View {
 
 struct Settings: View {
     @Binding var zones: String
-    @Binding var key: String
     @Binding var veil: Bool
     @Binding var tagLabels: String
-    @State var link = ""
-    @Environment(\.dismiss) var dismiss
+    @EnvironmentObject var auth: Auth
+    @AppStorage("user") var user = ""
+    let version = Bundle.main.infoDictionary.map { "\($0["CFBundleShortVersionString"] ?? "?") (\($0["CFBundleVersion"] ?? "?"))" } ?? "?"
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             Form {
-                Section(header: Text("Phone link (https://game.adtomic.co/?k=…)"),
-                        footer: Text(key.isEmpty ? "No key yet: Upload stays off." : "Key saved (…\(key.suffix(4))).")) {
-                    TextField("Paste your phone link", text: $link)
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .onChange(of: link) { v in
-                            let s = v.trimmingCharacters(in: .whitespacesAndNewlines)
-                            if let k = URLComponents(string: s)?.queryItems?.first(where: { $0.name == "k" })?.value, !k.isEmpty {
-                                key = k
-                            }
-                        }
+                Section("Account") {
+                    LabeledContent("Signed in as", value: user.isEmpty ? "Access link" : user)
+                    LabeledContent("Server", value: Auth.server.host ?? "")
+                    Button(role: .destructive) { auth.signOut() } label: { Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right") }
                 }
-                Section(header: Text("Zones (comma-separated)")) {
-                    TextField("Kitchen,Living room,…", text: $zones)
+                Section(header: Text("Zones"), footer: Text("Comma-separated. One button per room you walk through.")) {
+                    TextField("Kitchen, Living room, …", text: $zones)
                 }
-                Section(header: Text("Tag labels (comma-separated)")) {
-                    TextField("Fridge,Oven,…", text: $tagLabels)
+                Section(header: Text("Tag labels"), footer: Text("Comma-separated. Things that never move, tagged while recording.")) {
+                    TextField("Fridge, Oven, …", text: $tagLabels)
                 }
                 Section(footer: Text("Dark = not scanned yet; surfaces light up once the LiDAR mesh covers them.")) {
                     Toggle("Coverage veil", isOn: $veil)
                 }
+                Section { LabeledContent("Version", value: version) }
             }
             .navigationTitle("Settings")
-            .toolbar { Button("Done") { dismiss() } }
         }
     }
 }
 
-
 struct Sessions: View {
     @ObservedObject var rec: Recorder
-    @AppStorage("apiKey") var key = ""
     @State var ids: [String] = []
     @Environment(\.dismiss) var dismiss
 
     var body: some View {
-        NavigationView {
+        NavigationStack {
             List {
-                ForEach(ids, id: \.self) { id in Button(id) { rec.open(id); if !key.isEmpty { rec.poll(key: key, once: true) }; dismiss() } }
-                    .onDelete { $0.forEach { rec.delete(ids[$0]) }; ids = rec.sessions() }
+                ForEach(ids, id: \.self) { id in
+                    Button { rec.open(id); dismiss() } label: { Label(sessionTitle(id), systemImage: "video.fill") }
+                }
+                .onDelete { $0.forEach { rec.delete(ids[$0]) }; ids = rec.sessions() }
             }
-            .overlay { if ids.isEmpty { Text("No recordings yet").foregroundColor(.secondary) } }
-            .navigationTitle("Sessions")
+            .overlay {
+                if ids.isEmpty { Empty(icon: "video.slash", title: "No recordings yet", text: "Tap Start recording to walk through your home.") }
+            }
+            .navigationTitle("Recordings")
             .toolbar { Button("Done") { dismiss() } }
             .onAppear { ids = rec.sessions() }
         }
@@ -420,26 +461,24 @@ struct Review: View {
                 .onChange(of: cursor) { c in sv.scrollTo(c / 4, anchor: .center) }
             }
             HStack {
-                Button { cursor = max(cursor - 1, 0) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 40) }
+                Button { cursor = max(cursor - 1, 0) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }
+                    .accessibilityLabel("Previous frame")
                 Button(anchor == nil ? "Select range from here" : "Cancel range") { anchor = anchor == nil ? cursor : nil }
-                    .frame(maxWidth: .infinity, minHeight: 40).background(anchor == nil ? Color.gray.opacity(0.3) : Color.white).cornerRadius(8)
-                Button { cursor = min(cursor + 1, max(rooms.count - 1, 0)) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 40) }
+                    .buttonStyle(Fill(color: anchor == nil ? .gray.opacity(0.3) : .white, text: anchor == nil ? .white : .black, height: 44))
+                Button { cursor = min(cursor + 1, max(rooms.count - 1, 0)) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }
+                    .accessibilityLabel("Next frame")
             }
             Text(anchor == nil ? "Tap a zone: it applies from here to the next change" : "Tap a zone: it applies to the selected range")
                 .font(.caption).foregroundColor(.white.opacity(0.8))
             LazyVGrid(columns: [GridItem(), GridItem(), GridItem()]) {
                 ForEach(zones, id: \.self) { z in
-                    Button(z) { assign(z) }
-                        .frame(maxWidth: .infinity, minHeight: 40).background(color(z)).foregroundColor(.white).cornerRadius(8)
+                    Button(z) { assign(z) }.buttonStyle(Fill(color: color(z), height: 44))
                 }
             }
             HStack {
-                Button("Undo all") { rooms = orig; anchor = nil }
-                    .frame(maxWidth: .infinity, minHeight: 48).background(.gray.opacity(0.4)).foregroundColor(.white).cornerRadius(10)
-                Button("Skip") { if tags.isEmpty { done(nil, nil) } else { keep = nil; tagStep = true } }
-                    .frame(maxWidth: .infinity, minHeight: 48).background(.gray.opacity(0.4)).foregroundColor(.white).cornerRadius(10)
-                Button(tags.isEmpty ? "Save" : "Next") { if tags.isEmpty { done(rooms, []) } else { keep = rooms; tagStep = true } }.font(.headline)
-                    .frame(maxWidth: .infinity, minHeight: 48).background(.green).foregroundColor(.white).cornerRadius(10)
+                Button("Undo all") { rooms = orig; anchor = nil }.buttonStyle(Fill(color: .gray.opacity(0.4)))
+                Button("Skip") { if tags.isEmpty { done(nil, nil) } else { keep = nil; tagStep = true } }.buttonStyle(Fill(color: .gray.opacity(0.4)))
+                Button(tags.isEmpty ? "Save" : "Next") { if tags.isEmpty { done(rooms, []) } else { keep = rooms; tagStep = true } }.buttonStyle(Fill())
             }
         }
         .padding()
@@ -474,12 +513,10 @@ struct Review: View {
                 .onDelete { tags.remove(atOffsets: $0) }
             }
             .listStyle(.plain).environment(\.colorScheme, .dark)
-            .overlay { if tags.isEmpty { Text("No tags left").foregroundColor(.secondary) } }
+            .overlay { if tags.isEmpty { Empty(icon: "scope", title: "No tags left", text: "Save to build without tags, or go back.") } }
             HStack {
-                Button("Back") { tagStep = false }
-                    .frame(maxWidth: .infinity, minHeight: 48).background(.gray.opacity(0.4)).foregroundColor(.white).cornerRadius(10)
-                Button("Save") { done(keep, tags) }.font(.headline)
-                    .frame(maxWidth: .infinity, minHeight: 48).background(.green).foregroundColor(.white).cornerRadius(10)
+                Button("Back") { tagStep = false }.buttonStyle(Fill(color: .gray.opacity(0.4)))
+                Button("Save") { done(keep, tags) }.buttonStyle(Fill())
             }
         }
         .padding()

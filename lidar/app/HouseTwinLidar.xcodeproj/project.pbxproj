@@ -8,11 +8,17 @@
 
 /* Begin PBXBuildFile section */
 		323B13D4D6195453EBE796DA /* Recorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4883596E058090B5877027C /* Recorder.swift */; };
+		5C58655D5602BFFA8A3A3883 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 897AEA7F5D44EE1CC8C7BA12 /* Assets.xcassets */; };
+		B697F26F2A759168BCC30187 /* Maps.swift in Sources */ = {isa = PBXBuildFile; fileRef = 68136E7FB07C56DD692DCF07 /* Maps.swift */; };
+		B7951E0DAE979113640D0FF8 /* Auth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BA15B61AB693D1B782520C0 /* Auth.swift */; };
 		D3A1F349A7E370E489E0F23E /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75FC7C6FBED1116E17883E91 /* App.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		68136E7FB07C56DD692DCF07 /* Maps.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Maps.swift; sourceTree = "<group>"; };
 		75FC7C6FBED1116E17883E91 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		897AEA7F5D44EE1CC8C7BA12 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		8BA15B61AB693D1B782520C0 /* Auth.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Auth.swift; sourceTree = "<group>"; };
 		C4883596E058090B5877027C /* Recorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Recorder.swift; sourceTree = "<group>"; };
 		CB7402C6C798FCC471B24360 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E9A5C2534059B54766E03BBD /* HouseTwinLidar.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = HouseTwinLidar.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -31,7 +37,10 @@
 			isa = PBXGroup;
 			children = (
 				75FC7C6FBED1116E17883E91 /* App.swift */,
+				897AEA7F5D44EE1CC8C7BA12 /* Assets.xcassets */,
+				8BA15B61AB693D1B782520C0 /* Auth.swift */,
 				CB7402C6C798FCC471B24360 /* Info.plist */,
+				68136E7FB07C56DD692DCF07 /* Maps.swift */,
 				C4883596E058090B5877027C /* Recorder.swift */,
 			);
 			path = HouseTwinLidar;
@@ -53,6 +62,7 @@
 			buildConfigurationList = 2359D466B35029D3EC7DA9C0 /* Build configuration list for PBXNativeTarget "HouseTwinLidar" */;
 			buildPhases = (
 				6D25128C6A0EABC88EBA7B90 /* Sources */,
+				35E98BECEA087C62D38726F9 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -99,12 +109,25 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		35E98BECEA087C62D38726F9 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				5C58655D5602BFFA8A3A3883 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		6D25128C6A0EABC88EBA7B90 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				D3A1F349A7E370E489E0F23E /* App.swift in Sources */,
+				B7951E0DAE979113640D0FF8 /* Auth.swift in Sources */,
+				B697F26F2A759168BCC30187 /* Maps.swift in Sources */,
 				323B13D4D6195453EBE796DA /* Recorder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -235,16 +258,20 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 6WBE55AEH4;
 				INFOPLIST_FILE = HouseTwinLidar/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = io.housetwinpatrol.lidar.mc;
 				SDKROOT = iphoneos;
+				SERVER_URL = "https://game.adtomic.co";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
@@ -254,16 +281,20 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 6WBE55AEH4;
 				INFOPLIST_FILE = HouseTwinLidar/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
+				MARKETING_VERSION = 1.0.0;
 				PRODUCT_BUNDLE_IDENTIFIER = io.housetwinpatrol.lidar.mc;
 				SDKROOT = iphoneos;
+				SERVER_URL = "https://game.adtomic.co";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
