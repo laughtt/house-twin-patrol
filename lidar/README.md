@@ -23,8 +23,7 @@ Free (personal team) apps stop opening after 7 days: plug in and press Run again
 The robot duck films from about 20 cm above the floor and finds its place from fixed objects and the look of each room,
 so every zone needs a chest-height sweep, a slow duck-height turn and a few tagged objects. A checklist card guides this per zone.
 
-1. Gear icon → paste your phone link `https://game.adtomic.co/?k=…` (the app keeps only the key); edit the zone list
-   and the tag labels if you like.
+1. Sign in with your account (see `app/README.md` for the server side); Settings has the zone list and the tag labels.
 2. Good light, doors open. Tap the zone you start in, then **Start**. Point at the floor for a moment: the HUD shows
    "Height 1.32 m" once ARKit has found it.
 3. **Walls**: walk slowly (about half a normal pace), the phone at chest height and tilted a little down so the floor shows,
