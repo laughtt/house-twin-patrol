@@ -1,18 +1,24 @@
 # 3-minute video script
 
-About 390 words of voice-over (~2:45 at 140 words a minute, room for pauses). Every number below is measured (DEMO.md).
+About 400 words of voice-over (~2:50 at 140 words a minute). The rules require the team on camera: the first 10 s. Every number below is measured (DEMO.md).
 Clip times in the live film refer to `out/walk/selfloc_live_camera/walk_2x.mp4` (2× speed, 3:34 long).
 
 ## Shot list and voice-over
 
-### 0:00–0:15 · Hook
+### 0:00–0:10 · The team (required by the rules)
+**Show:** Jose Mauricio Carpio on camera (webcam or phone), at home.
+**On screen:** "Jose Mauricio Carpio · House Twin Patrol · OpenCV AI Competition 2026"
+**Say (own voice):**
+> Hi, I'm Jose Mauricio Carpio, and this is House Twin Patrol.
+
+### 0:10–0:22 · Hook
 **Show:** live film 0:00–0:06 (the duck turns on the spot, the "sure" bar fills), then a title card: *House Twin Patrol*.
 **On screen:** "No stickers. No GPS. One iPhone walk."
 **Say:**
 > This little robot has never been told where it is. No stickers on the walls, no beacons. In eight seconds it will know
 > which room it's in, to within centimetres, using a map we built with one walk and an iPhone.
 
-### 0:15–0:45 · The app
+### 0:22–0:45 · The app
 **Show:** `docs/app_screens.jpg`, panning left to right (sign in → My maps → floor plan → 3D). Better: a screen
 recording on a LiDAR iPhone of a short recording, Upload, and My maps switching from "Building" to "Ready".
 **On screen:** "Record → Upload → Ready"

@@ -29,15 +29,18 @@
   <text x="52" y="282" class="m">lidar/app</text>
 
   <!-- server -->
-  <rect class="box" x="450" y="100" width="300" height="190"/>
-  <rect x="450" y="100" width="8" height="190" fill="#2f6fdf"/>
-  <text x="472" y="130" class="t">Server (FastAPI)</text>
-  <text x="472" y="156" class="s">POST /auth/login: scrypt password,</text>
-  <text x="472" y="176" class="s">HMAC-signed 30-day token, rate limit</text>
-  <text x="472" y="196" class="s">/upload, /lidar/build, /lidar/maps</text>
-  <text x="472" y="216" class="s">/lidar/file, /lidar/3d (web viewer)</text>
-  <text x="472" y="242" class="s">runs the twin build per session</text>
-  <text x="472" y="282" class="m">service/app.py</text>
+  <rect class="box" x="450" y="100" width="300" height="250"/>
+  <rect x="450" y="100" width="8" height="250" fill="#ff9900"/>
+  <text x="472" y="130" class="t">AWS: EC2 Graviton4 (Arm)</text>
+  <text x="472" y="150" class="m">c8g.xlarge, us-east-1</text>
+  <text x="472" y="174" class="s">Caddy (HTTPS) → FastAPI (systemd)</text>
+  <text x="472" y="194" class="s">POST /auth/login: scrypt password,</text>
+  <text x="488" y="214" class="s">HMAC-signed 30-day token, rate limit</text>
+  <text x="472" y="234" class="s">/upload, /lidar/build, /lidar/maps, /lidar/3d</text>
+  <text x="472" y="258" class="s">runs the OpenCV 5 twin build on Arm</text>
+  <text x="472" y="282" class="s">Amazon Bedrock (Claude): room-measure</text>
+  <text x="488" y="302" class="s">agent; IAM role allows Claude only</text>
+  <text x="472" y="338" class="m">service/, infra/ (Caddyfile, twin.service, IAM)</text>
 
   <!-- twin build -->
   <rect class="box" x="870" y="100" width="300" height="300"/>
@@ -49,7 +52,7 @@
   <text x="892" y="222" class="s">HoughLinesP) · 3 doors</text>
   <text x="892" y="242" class="s">4 rooms (connectedComponents,</text>
   <text x="892" y="262" class="s">floodFill, findContours, approxPolyDP)</text>
-  <text x="892" y="288" class="s">furniture labels: cv.dnn</text>
+  <text x="892" y="288" class="s">landmark check: CLIP in cv.dnn</text>
   <text x="892" y="314" class="s">→ house.json, top.png, cloud.ply</text>
   <text x="892" y="334" class="s">→ MuJoCo scene of the house</text>
   <text x="892" y="390" class="m">lidar/pipeline, twin/, twin/plan/</text>
@@ -102,8 +105,8 @@
   <text x="352" y="248" class="lbl">maps, plan, 3D</text>
   <path class="e" d="M750,170 H866"/>
   <text x="772" y="160" class="lbl">build</text>
-  <path class="e" d="M870,370 C800,370 760,380 720,396"/>
-  <text x="760" y="364" class="lbl">house.json</text>
+  <path class="e" d="M870,380 C840,385 830,392 812,400"/>
+  <text x="766" y="392" class="lbl">house.json</text>
   <path class="e" d="M450,470 H354"/>
   <text x="366" y="462" class="lbl">move(vx, vyaw)</text>
   <path class="e" d="M350,560 H446"/>

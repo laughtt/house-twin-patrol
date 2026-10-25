@@ -6,7 +6,7 @@
 #   scripts/demo.sh app                  generate the Xcode project and open it
 set -euo pipefail
 cd "$(dirname "$0")/.."
-PY=(uv run --python 3.12 --with mujoco --with opencv-python-headless==5.0.0.93 python)
+PY=(uv run --python 3.12 --with-requirements requirements.lock python)  # pinned versions
 MICRODUCK=${MICRODUCK:-$HOME/Pollen/microduck}
 SCENE=${DUCK_SIM_SCENE:-$HOME/Pollen/microduck_rl/src/mjlab_microduck/robot/microduck/scene_myhouse.xml}
 
@@ -14,7 +14,7 @@ case "${1:-}" in
 offline)
     "${PY[@]}" eval/selfloc.py --variants base,spin+rowfix+range+fit+relook+jump --seeds 4
     "${PY[@]}" eval/vision_walk.py --seeds 8
-    uv run --python 3.12 --with pytest --with opencv-python-headless==5.0.0.93 --with numpy python -m pytest eval/adversarial -q ||
+    "${PY[@]}" -m pytest eval/adversarial -q ||
         echo "known failure: twin_rooms_tv_cue (rooms that look alike to the ToF; DEMO.md, limits)"
     ;;
 live)
