@@ -46,15 +46,15 @@ def map_panel(house, goals, trace, k, size=(640, 600)):
     for r in house["rooms"]:
         x0, y0, x1, y1 = max(r["rects"], key=lambda q: (q[2] - q[0]) * (q[3] - q[1]))
         text(img, r["name"].replace("_", " "), (px((x0, y1))[0] + 6, px((x0, y1))[1] + 20), 0.5, (170, 170, 165))
-    steps = [s for s in trace[:k + 1] if "true" in s]
+    steps = [s for s in trace[:k + 1] if "mode" in s]
     if len(steps) > 1:
         cv.polylines(img, [np.array([px(s["true"]) for s in steps])], False, (90, 200, 255), 2, cv.LINE_AA)
-    cur = trace[k]
+    cur = next((trace[j] for j in range(k, -1, -1) if "mode" in trace[j]), trace[k])  # a step, not an event line
     for g in goals:
         done = any(s.get("event") == "arrive" and s["goal"] == g["name"] for s in trace[:k + 1])
         col = (110, 220, 120) if done else (255, 255, 255) if g["name"] == cur.get("goal") else (130, 130, 130)
         cv.drawMarker(img, px(g["xy"]), col, cv.MARKER_TILTED_CROSS if not done else cv.MARKER_STAR, 22, 2)
-    if "true" in cur:
+    if "est" in cur:
         t, e = cur["true"], cur["est"]
         cv.circle(img, px(t), 9, (90, 200, 255), -1, cv.LINE_AA)
         cv.line(img, px(t), px((t[0] + 0.3 * math.cos(t[2]), t[1] + 0.3 * math.sin(t[2]))), (90, 200, 255), 3, cv.LINE_AA)
@@ -146,15 +146,22 @@ def main():
         else:
             text(strip, "it says: not sure where I am yet", (24, 140), 0.8, (80, 190, 255), 2)
         text(strip, f"(truth: {true_room})", (640, 140), 0.7, (170, 170, 165))
-        if s.get("seen"):
-            text(strip, "sees: " + ", ".join(sorted(set(s["seen"]))), (24, 180), 0.7, (220, 200, 150))
+        seen = sorted(set(s.get("seen", []))) + ([f"colours like the {s['colour'].replace('_', ' ')}"] if s.get("colour") else [])
+        if seen:
+            text(strip, "sees: " + ", ".join(seen), (24, 180), 0.7, (220, 200, 150))
         if s.get("cmd"):
             text(strip, f"command to the walking policy: forward {s['cmd'][0]:.2f} m/s, turn {s['cmd'][1]:+.2f} rad/s", (24, 220), 0.6, (170, 170, 165))
         done = [t for t in trace[:k + 1] if t.get("event") == "arrive"]
         text(strip, "reached: " + ("  ".join(f"{t['goal'].replace('_', ' ')} ({t['true_dist'] * 100:.0f} cm off)" for t in done) or "-"),
              (24, 262), 0.7, (110, 220, 120))
+        ev = next((t for t in trace[k:max(0, k - 60):-1] if t.get("event") in ("vision_decision", "approval")), None)
+        if ev and tw - ev["wall"] < 4:  # OpenCV changed what the brain does, or it asked a person
+            msg = (f"camera changed the plan ({ev['cause']}): {ev['before']['mode']} -> {ev['after']['mode']}, "
+                   f"room {ev['after']['room'] or '?'}".replace("_", " ") if ev["event"] == "vision_decision"
+                   else f"asked a person: keep looking? -> {'yes' if ev['answer'] else 'no, stop'} ({ev['by']})")
+            text(strip, msg, (24, 292), 0.65, (120, 200, 255), 2)
         text(strip, "Pollen Microduck - real robotd + trained walking policy (ONNX, 50 Hz) in MuJoCo - zero stickers", (24, 316), 0.6, (150, 150, 150))
-        text(strip, f"house: our flat, built from the iPhone LiDAR scan - {a.speed:g}x speed", (24, 344), 0.6, (150, 150, 150))
+        text(strip, f"house: built from an iPhone LiDAR scan - {a.speed:g}x speed", (24, 344), 0.6, (150, 150, 150))
         vw.write(frame)
         if n % 250 == 0:
             print(f"{n}/{len(times)}", flush=True)

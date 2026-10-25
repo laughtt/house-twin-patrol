@@ -10,6 +10,7 @@ vision_decision and approval: agent/README.md), summary.json.
 """
 import argparse
 import json
+from collections import Counter
 import math
 import time
 from pathlib import Path
@@ -23,7 +24,7 @@ from agent.loop import follow, route
 from agent.mission import ARRIVE, ARRIVE_SURE, HZ, MARGIN, SQUEEZE, SURE, TURN, VX, goals
 from agent.twin_sim import ROOT, TwinSim
 
-LOST_S = 10  # looking around this long (in all) on one goal without knowing where it is: ask a person whether to go on
+LOST_S = 20  # looking around this long (in all) on one goal without knowing where it is: ask a person whether to go on
 
 
 def gait(v, w):
@@ -34,6 +35,20 @@ def gait(v, w):
     if v < 0.05:
         return (0.0, math.copysign(1.5, w)) if abs(w) > 0.1 else (0.0, 0.0)
     return max(0.2, 1.6 * v), w
+
+
+def lost_tick(pf, mode):
+    """Seconds of being lost this tick: looking around, but not the spin match's normal first turns (a turn on the spot
+    is how it finds itself; ~7 s live). Replayed on the live walk: 2 questions in 400 s instead of 7."""
+    return (mode == "look" and (pf.spin is None or pf.spin.matched or pf.spin.tries >= 2)) / HZ
+
+
+def colour_doubt(votes, goal):
+    """Before "I'm in the <goal>": the room the camera's colours named most over the last 5 s. Another room → the
+    question for a person (the vote names the true room at 45 of 48 arrivals, eval/vision_walk.py); same room → None."""
+    vote = Counter(v for v in votes if v).most_common(1)
+    if vote and vote[0][0] != goal:
+        return f"I think I'm in the {goal.replace('_', ' ')}, but the camera's colours say {vote[0][0].replace('_', ' ')}. Say I've arrived?"
 
 
 def approve(question, ask=False):
@@ -99,10 +114,10 @@ def main():
     true, _ = truth()
     start, last, seq = true, duck.state["odom"], None
     t0 = time.time()
-    trace, results, bumps, found, back, history, stopped = [], [], 0, None, 0, [], False
+    trace, results, bumps, found, back, history, stopped, votes = [], [], 0, None, 0, [], False, []
     think, steps, plans = 0.0, 0, 0  # the brain's own compute
     for g in todo:
-        g0, path, last_plan, goal_bumps, lost = time.time(), None, -9.0, 0, 0.0
+        g0, path, last_plan, goal_bumps, lost, doubt = time.time(), None, -9.0, 0, 0.0, -1.0
         while time.time() - g0 < a.goal_s and goal_bumps < 12 and not stopped:
             tick, t = time.time(), time.time() - t0
             true, trunk_z = truth()
@@ -124,6 +139,7 @@ def main():
                 except (OSError, KeyError):
                     pass  # a frame late or lost: this tick without the camera
             est, conf = pf.estimate(), pf.confidence()
+            votes = (votes + [vote])[-5 * HZ:]
             if K is not None and (ev := vision_decision(hmap, room_name, g["xy"], before, (est, conf), seen, vote)):
                 trace.append({"t": round(t, 2), **ev, "goal": g["name"], "true": [round(v_, 3) for v_ in true]})
                 last_plan = -9.0  # plan the route again from the corrected guess
@@ -134,7 +150,15 @@ def main():
             if back:
                 mode, v, w, back = "back off", -0.1, 0.0, back - 1
             elif conf >= SURE:
-                if math.hypot(est[0] - g["xy"][0], est[1] - g["xy"][1]) < ARRIVE and conf >= ARRIVE_SURE:
+                at = math.hypot(est[0] - g["xy"][0], est[1] - g["xy"][1]) < ARRIVE and conf >= ARRIVE_SURE and t > doubt
+                q = at and K is not None and colour_doubt(votes, g["name"])
+                if q:  # the camera disagrees: a person decides
+                    ok = approve(q, a.ask)
+                    trace.append({"t": round(t, 2), "event": "approval", "question": q, "answer": ok, "by": "terminal" if a.ask else "auto",
+                                  "cause": "room colour", "goal": g["name"]})
+                    print("asked:", q, "->", "yes" if ok else "no: not there yet", flush=True)
+                    at, doubt = ok, t if ok else t + 10
+                if at:
                     results.append({"goal": g["name"], "t": round(time.time() - g0, 1), "declared": True,
                                     "true_dist": round(math.hypot(true[0] - g["xy"][0], true[1] - g["xy"][1]), 3),
                                     "room_said": room_name(est[0], est[1]), "room_true": room_name(true[0], true[1])})
@@ -154,7 +178,7 @@ def main():
                     v = VX * max(0.0, math.cos(e)) ** 3
                     if sim.clearance[int((est[1] - hmap.o[1]) / 0.02) + 1, int((est[0] - hmap.o[0]) / 0.02) + 1] < MARGIN + 0.02:
                         v = min(v, 0.08)
-            lost += (mode == "look") / HZ
+            lost += lost_tick(pf, mode)
             if lost > LOST_S:
                 q = (f"Lost for {LOST_S} s ({conf:.0%} sure, best guess: {room_name(est[0], est[1]) or '?'}, the camera's colours "
                      f"say: {vote or 'no camera'}). Keep looking for the {g['name']}?")

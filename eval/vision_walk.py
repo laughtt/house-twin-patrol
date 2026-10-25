@@ -4,8 +4,9 @@ agent/walk.py (vision_decision events, the lost-for-LOST_S question) without Pol
 ToF + camera from the same starts; the stand-in object detector is off unless --standin, so the camera is the only eye.
 
 uv run --python 3.12 --with mujoco --with opencv-python-headless==5.0.0.93 python eval/vision_walk.py [--seeds 8]
-  [--zero-stickers] [--standin] [--decline]
---zero-stickers: no markers on the walls (the camera has only the room colours). --decline: the person says no.
+  [--stickers] [--standin] [--decline]
+Default: no markers on the walls, the camera has only the room colours (zero stickers). --stickers: ArUco plates on 3 walls.
+--decline: the person says no.
 Out: out/vision/<house>/<setup>/<arm>/seed<N>/trace.jsonl + summary.json, and out/vision/<house>/<setup>/summary.json.
 """
 import argparse
@@ -25,7 +26,7 @@ from agent.localize import ParticleFilter, _wrap  # noqa: E402
 from agent.loop import follow, route  # noqa: E402
 from agent.mission import ARRIVE, ARRIVE_SURE, GOAL_S, HZ, MARGIN, SQUEEZE, SURE, TURN, VX, goals  # noqa: E402
 from agent.twin_sim import TwinSim  # noqa: E402
-from agent.walk import LOST_S, vision_decision  # noqa: E402
+from agent.walk import LOST_S, colour_doubt, lost_tick, vision_decision  # noqa: E402
 
 
 def episode(args):
@@ -43,9 +44,9 @@ def episode(args):
             if h:
                 r["colour_hs"] = h
     pf = ParticleFilter.anywhere(hmap, seed=seed)
-    t, trace, results, found, back, stopped = 0.0, [], [], None, 0, False
+    t, trace, results, found, back, stopped, votes = 0.0, [], [], None, 0, False, []
     for g in todo:
-        t0, path, last_plan, goal_bumps, lost = t, None, -9.0, 0, 0.0
+        t0, path, last_plan, goal_bumps, lost, doubt = t, None, -9.0, 0, 0.0, -1.0
         while t - t0 < GOAL_S and goal_bumps < 12 and not stopped:
             pf.update_tof(*sim.tof(*true))
             if standin:
@@ -54,6 +55,7 @@ def episode(args):
             if camera:
                 seen, vote = perceive.see(pf, cv.cvtColor(sim.image(*true), cv.COLOR_RGB2BGR), sim.K)
             est, conf = pf.estimate(), pf.confidence()
+            votes = (votes + [vote])[-5 * HZ:]
             if camera and (ev := vision_decision(hmap, room_name, g["xy"], before, (est, conf), seen, vote)):
                 trace.append({"t": round(t, 1), **ev, "goal": g["name"], "true": [round(v, 3) for v in true]})
                 last_plan = -9.0
@@ -63,7 +65,13 @@ def episode(args):
             if back:
                 mode, v, w, back = "back off", -0.1, 0.0, back - 1
             elif conf >= SURE:
-                if math.hypot(est[0] - g["xy"][0], est[1] - g["xy"][1]) < ARRIVE and conf >= ARRIVE_SURE:
+                at = math.hypot(est[0] - g["xy"][0], est[1] - g["xy"][1]) < ARRIVE and conf >= ARRIVE_SURE and t > doubt
+                q = at and camera and colour_doubt(votes, g["name"])
+                if q:
+                    trace.append({"t": round(t, 1), "event": "approval", "question": q, "answer": not decline, "by": "script",
+                                  "cause": "room colour", "goal": g["name"]})
+                    at, doubt = not decline, t if not decline else t + 10
+                if at:
                     results.append({"goal": g["name"], "t": round(t - t0, 1), "declared": True,
                                     "true_dist": round(math.hypot(true[0] - g["xy"][0], true[1] - g["xy"][1]), 3)})
                     trace.append({"t": round(t, 1), "event": "arrive", **results[-1]})
@@ -80,7 +88,7 @@ def episode(args):
                     v = VX * max(0.0, math.cos(e)) ** 3
                     if sim.clearance[int((est[1] - hmap.o[1]) / 0.02) + 1, int((est[0] - hmap.o[0]) / 0.02) + 1] < MARGIN + 0.02:
                         v = min(v, 0.08)
-            lost += (mode == "look") / HZ
+            lost += lost_tick(pf, mode)
             if lost > LOST_S:
                 q = (f"Lost for {LOST_S} s ({conf:.0%} sure, best guess: {room_name(est[0], est[1]) or '?'}, the camera's colours "
                      f"say: {vote or 'no camera'}). Keep looking for the {g['name']}?")
@@ -117,14 +125,14 @@ def main():
     ap = argparse.ArgumentParser(prog="vision_walk")
     ap.add_argument("--house", default=str(ROOT / "out/current"))
     ap.add_argument("--seeds", type=int, default=8)
-    ap.add_argument("--zero-stickers", action="store_true")
+    ap.add_argument("--stickers", action="store_true")
     ap.add_argument("--standin", action="store_true")
     ap.add_argument("--decline", action="store_true")
     a = ap.parse_args()
     house_dir = Path(a.house).resolve()
-    out = ROOT / "out/vision" / house_dir.name / ("_".join(k for k in ("zero_stickers", "standin", "decline") if getattr(a, k)) or "default")
+    out = ROOT / "out/vision" / house_dir.name / ("_".join(k for k in ("stickers", "standin", "decline") if getattr(a, k)) or "default")
     arms = {"tof": False, "tof+camera": True}
-    jobs = [(house_dir, s, cam, not a.zero_stickers, a.standin, a.decline, out / arm) for arm, cam in arms.items() for s in range(a.seeds)]
+    jobs = [(house_dir, s, cam, a.stickers, a.standin, a.decline, out / arm) for arm, cam in arms.items() for s in range(a.seeds)]
     with ProcessPoolExecutor(max_workers=8) as pool:
         eps = list(pool.map(episode, jobs))
     total = {}
@@ -135,7 +143,7 @@ def main():
                       "found": f"{len(fs)}/{len(e)}", "found_s_median": float(np.median(fs)) if fs else None,
                       "vision_decisions": sum(x["vision_decisions"] for x in e), "approvals": sum(len(x["approvals"]) for x in e),
                       "stopped": sum(any(r.get("why") == "declined" for r in x["results"]) for x in e)}
-    total["setup"] = {"stickers": not a.zero_stickers, "standin": a.standin, "decline": a.decline, "seeds": a.seeds}
+    total["setup"] = {"stickers": a.stickers, "standin": a.standin, "decline": a.decline, "seeds": a.seeds}
     out.mkdir(parents=True, exist_ok=True)
     (out / "summary.json").write_text(json.dumps(total, indent=1))
     print(json.dumps(total, indent=1))

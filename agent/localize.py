@@ -116,7 +116,13 @@ class ParticleFilter:
         landmarks.room(self, hist, sharp)
 
     def update_marker(self, marker_id, solutions):
-        return landmarks.marker(self, marker_id, solutions)
+        """One ArUco sighting (perceive.see passes those within 3 m). Once sure, its pose is the trusted one, so the jump
+        check doesn't drop it. Not before: IPPE's two poses are told apart by the current guess, which is still random
+        then (ending the spin on a marker: 48 → 32 of 48 goals, eval/vision_walk.py)."""
+        pose = landmarks.marker(self, marker_id, solutions)
+        if self.jump and self.spin.matched:
+            self.anchor, self.walked = pose, 0.0
+        return pose
 
     def estimate(self):
         """The strongest group of guesses (30 cm cells, then everything within 50 cm of the best one): stray guesses
