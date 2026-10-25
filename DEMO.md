@@ -152,7 +152,7 @@ with a banner whenever the camera changed the plan or the duck asked a person.
 | human approval and failure handling | `approval` events; declined → stop (lost) or check again (arrival) |
 | a trace showing vision changing a decision | `out/walk/<house>/trace.jsonl`, e.g. `{"event": "vision_decision", "cause": "room colour (room_3)", "before": {"mode": "go", "room": "bedroom_2", …}, "after": {"mode": "go", "room": "room_3", …}}` |
 
-## 7. A 5-minute video
+## 7. A 5-minute video (3-minute cut with full voice-over: [docs/VIDEO_SCRIPT.md](docs/VIDEO_SCRIPT.md))
 | time | show | say |
 |---|---|---|
 | 0:00–0:40 | the app: sign in, record a walk with zone taps, upload | "One walk with an iPhone is all the setup." |
