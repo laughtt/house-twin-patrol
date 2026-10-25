@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 780" font-family="-apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b6b72"/>
+    </marker>
+    <style>
+      .box{fill:#fff;stroke:#d8d8d4;stroke-width:1.5;rx:12}
+      .t{font-size:17px;font-weight:700;fill:#1c1c1e}
+      .s{font-size:13px;fill:#4a4a50}
+      .m{font-size:12px;fill:#6c6c72}
+      .e{stroke:#6b6b72;stroke-width:2;fill:none;marker-end:url(#a)}
+      .lbl{font-size:12px;fill:#6c6c72}
+    </style>
+  </defs>
+  <rect width="1200" height="780" fill="#f6f6f3"/>
+  <text x="30" y="44" font-size="24" font-weight="700" fill="#1c1c1e">House Twin Patrol: architecture</text>
+  <text x="30" y="68" class="m">One iPhone LiDAR walk becomes a twin built with OpenCV 5; the robot patrols it with zero stickers and asks a person when unsure.</text>
+
+  <!-- capture -->
+  <rect class="box" x="30" y="100" width="300" height="190"/>
+  <rect x="30" y="100" width="8" height="190" fill="#0f8a8a"/>
+  <text x="52" y="130" class="t">iPhone app (SwiftUI)</text>
+  <text x="52" y="156" class="s">records RGB + LiDAR depth + ARKit pose</text>
+  <text x="52" y="176" class="s">zone taps, doorway marks, tags</text>
+  <text x="52" y="196" class="s">recording check, review, upload</text>
+  <text x="52" y="222" class="s">sign in (token in the Keychain)</text>
+  <text x="52" y="242" class="s">My maps: building → ready,</text>
+  <text x="52" y="262" class="s">floor plan + 3D</text>
+  <text x="52" y="282" class="m">lidar/app</text>
+
+  <!-- server -->
+  <rect class="box" x="450" y="100" width="300" height="190"/>
+  <rect x="450" y="100" width="8" height="190" fill="#2f6fdf"/>
+  <text x="472" y="130" class="t">Server (FastAPI)</text>
+  <text x="472" y="156" class="s">POST /auth/login: scrypt password,</text>
+  <text x="472" y="176" class="s">HMAC-signed 30-day token, rate limit</text>
+  <text x="472" y="196" class="s">/upload, /lidar/build, /lidar/maps</text>
+  <text x="472" y="216" class="s">/lidar/file, /lidar/3d (web viewer)</text>
+  <text x="472" y="242" class="s">runs the twin build per session</text>
+  <text x="472" y="282" class="m">service/app.py</text>
+
+  <!-- twin build -->
+  <rect class="box" x="870" y="100" width="300" height="300"/>
+  <rect x="870" y="100" width="8" height="300" fill="#a046d9"/>
+  <text x="892" y="130" class="t">Twin build (OpenCV 5)</text>
+  <text x="892" y="156" class="s">fuse depth: cv.Volume (HashTSDF),</text>
+  <text x="892" y="176" class="s">cv.RgbdNormals</text>
+  <text x="892" y="202" class="s">1 floor · 2 walls (morphologyEx,</text>
+  <text x="892" y="222" class="s">HoughLinesP) · 3 doors</text>
+  <text x="892" y="242" class="s">4 rooms (connectedComponents,</text>
+  <text x="892" y="262" class="s">floodFill, findContours, approxPolyDP)</text>
+  <text x="892" y="288" class="s">furniture labels: cv.dnn</text>
+  <text x="892" y="314" class="s">→ house.json, top.png, cloud.ply</text>
+  <text x="892" y="334" class="s">→ MuJoCo scene of the house</text>
+  <text x="892" y="390" class="m">lidar/pipeline, twin/, twin/plan/</text>
+
+  <!-- brain -->
+  <rect class="box" x="450" y="400" width="360" height="300"/>
+  <rect x="450" y="400" width="8" height="300" fill="#1f9d55"/>
+  <text x="472" y="430" class="t">The duck's brain (5 Hz)</text>
+  <text x="472" y="456" class="s">where am I? particle filter on house.json</text>
+  <text x="488" y="476" class="s">ToF rows → spin match → fit check →</text>
+  <text x="488" y="496" class="s">jump check (distanceTransform map)</text>
+  <text x="472" y="522" class="s">see: OpenCV on the head camera</text>
+  <text x="488" y="542" class="s">cvtColor, inRange, calcHist → room vote</text>
+  <text x="472" y="568" class="s">decide: look | A* route | arrive</text>
+  <text x="488" y="588" class="s">vision_decision → re-plan</text>
+  <text x="472" y="614" class="s">ask a person: "keep looking?",</text>
+  <text x="488" y="634" class="s">"say I've arrived?" (camera disagrees)</text>
+  <text x="472" y="660" class="s">trace.jsonl, film with banners</text>
+  <text x="472" y="690" class="m">agent/loc/, localize.py, perceive.py, walk.py</text>
+
+  <!-- robot -->
+  <rect class="box" x="30" y="400" width="320" height="210"/>
+  <rect x="30" y="400" width="8" height="210" fill="#d98a00"/>
+  <text x="52" y="430" class="t">Pollen Microduck (duck-sim)</text>
+  <text x="52" y="456" class="s">robotd: trained walking policy,</text>
+  <text x="52" y="476" class="s">ONNX at 50 Hz → odometry</text>
+  <text x="52" y="502" class="s">tofd: 8×8 time-of-flight sensor</text>
+  <text x="52" y="528" class="s">mediad: head camera frames</text>
+  <text x="52" y="554" class="s">body simulated in MuJoCo,</text>
+  <text x="52" y="574" class="s">in the twin of the scanned house</text>
+  <text x="52" y="600" class="m">no true pose, no stickers</text>
+
+  <!-- eval -->
+  <rect class="box" x="870" y="440" width="300" height="260"/>
+  <rect x="870" y="440" width="8" height="260" fill="#6c6c72"/>
+  <text x="892" y="470" class="t">Evaluation</text>
+  <text x="892" y="496" class="s">eval/selfloc.py: filter settings on</text>
+  <text x="892" y="516" class="s">22 houses × seeds × 2 sensors</text>
+  <text x="892" y="542" class="s">eval/vision_walk.py: ToF vs ToF +</text>
+  <text x="892" y="562" class="s">camera in the offline twin</text>
+  <text x="892" y="588" class="s">eval/adversarial: 73 fast tests</text>
+  <text x="892" y="614" class="s">live walks on duck-sim</text>
+  <text x="892" y="640" class="s">agent/film.py: replay + overlay</text>
+  <text x="892" y="690" class="m">eval/, agent/film.py</text>
+
+  <!-- edges -->
+  <path class="e" d="M330,170 H446"/>
+  <text x="352" y="160" class="lbl">upload walk</text>
+  <path class="e" d="M446,230 H334"/>
+  <text x="352" y="248" class="lbl">maps, plan, 3D</text>
+  <path class="e" d="M750,170 H866"/>
+  <text x="772" y="160" class="lbl">build</text>
+  <path class="e" d="M870,370 C800,370 760,380 720,396"/>
+  <text x="760" y="364" class="lbl">house.json</text>
+  <path class="e" d="M450,470 H354"/>
+  <text x="366" y="462" class="lbl">move(vx, vyaw)</text>
+  <path class="e" d="M350,560 H446"/>
+  <text x="362" y="580" class="lbl">odometry, ToF,</text>
+  <text x="362" y="596" class="lbl">camera frames</text>
+  <path class="e" d="M1020,400 V436"/>
+  <path class="e" d="M866,560 H814"/>
+  <text x="30" y="752" class="m">Contest category: Agentic Vision. OpenCV 5 builds the map and, on the robot, its results change the route or trigger a request for a person's approval.</text>
+</svg>

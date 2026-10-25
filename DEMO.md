@@ -15,6 +15,8 @@ iPhone app ──upload──► server builds the twin (OpenCV 5) ──house.j
 *The agent loop on the live walk, real values from its trace: the 8×8 ToF zones, how sure it is, what it thinks vs what
 the camera's colours say, and the moments OpenCV changed the plan or the duck asked a person (yellow edges).*
 
+![Architecture](docs/architecture.svg)
+
 Contest category: **Agentic Vision**. The checklist with evidence is in [section 6](#6-agentic-vision-evidence).
 
 ## 0. Setup (once)
@@ -51,6 +53,10 @@ flat.
 ```
 uv run --python 3.12 --with opencv-python-headless==5.0.0.93 python lidar/pipeline/build_house.py <session>.zip
 ```
+![Map construction: floor, walls, doors, rooms, the duck's map](docs/map_build.gif)
+
+![3D map of the house from the LiDAR walk](docs/house_3d.gif)
+
 Four OpenCV stages (`twin/plan/`), each leaving a picture (`stage_walls.png`, `stage_doors.png`, `stage_rooms.png`):
 
 | stage | OpenCV 5 | what it finds |
@@ -114,6 +120,8 @@ uv run --python 3.12 --with mujoco --with opencv-python-headless==5.0.0.93 pytho
   --house out/houses/<house> --goals bedroom,bedroom_2,room_3,living_room --no-standin --ask
 uv run --python 3.12 --with mujoco --with opencv-python-headless==5.0.0.93 python -m agent.film --house out/houses/<house> --speed 2
 ```
+![The live robot walk, 12× speed](docs/robot_walk.gif)
+
 `summary.json` has `camera: true`, `vision_decisions` and `approvals`; `grep -E 'vision_decision|approval' trace.jsonl`
 shows each one. The film shows the chase camera, the duck's own eye, the map (truth vs belief) and the brain in words,
 with a banner whenever the camera changed the plan or the duck asked a person.
