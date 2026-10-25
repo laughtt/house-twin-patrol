@@ -2,7 +2,7 @@
 
 uv run --python 3.12 --with opencv-python-headless==5.0.0.93 --with boto3 python lidar/pipeline/build_house.py <export.zip|folder> [out_dir]
 
-Stages (twin/): scan_io → fuse → floorplan → landmarks (+ user tags) → curate (small model) → furniture → house.
+Stages (twin/): scan_io → fuse → floorplan (twin/plan: floor → walls → doors → rooms) → landmarks (+ user tags) → curate (small model) → furniture → house.
 No step needs a person or Claude Code; the curate model is optional (config [curate]).
 """
 import json
@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from twin import curate, floorplan, fuse, house as H, landmarks as lmk  # noqa: E402
 from twin.furniture import furniture  # noqa: E402
+from twin.plan.rooms import name_rooms  # noqa: E402
 from twin.landmarks import upright_detect, zone_at  # noqa: E402,F401 - zone_at: eval/score_house.py
 from twin.scan_io import Export  # noqa: E402
 
@@ -34,7 +35,7 @@ def build(src, out=None, detect_fn=upright_detect, every=2, extra_markers=None, 
     out.mkdir(parents=True, exist_ok=True)
     sc = fuse.fuse(ex, frames)
     lap("fuse_s")
-    spaces, zones, walls_full, doors = floorplan.plan(sc.V, sc.Nv, sc.traj, sc.tlab)
+    spaces, zones, walls_full, doors = floorplan.plan(sc.V, sc.Nv, sc.traj, sc.tlab, out)
     walls = [w_[:5] for w_ in walls_full]
     lap("rooms_s")
     cands = lmk.tagged(ex, frames, sc, walls, lmk.candidates(ex, frames, sc, zones, walls, detect_fn, every))
@@ -46,6 +47,7 @@ def build(src, out=None, detect_fn=upright_detect, every=2, extra_markers=None, 
     lap("landmarks_s")
     decisions, curated = curate.curate(cands, crops, [z["label"] for z in zones], use_model)
     landmarks = lmk.finish(cands, decisions)
+    name_rooms(spaces, zones, landmarks)
     colours = lmk.room_colours(ex, frames, sc)
     lap("curate_s")
     objects = [ob for s in spaces for ob in furniture(sc.V, s, landmarks)]

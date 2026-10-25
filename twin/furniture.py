@@ -2,7 +2,7 @@
 import cv2 as cv
 import numpy as np
 
-from twin import floorplan
+from twin.plan.rooms import rects_of
 
 
 def furniture(V, space, landmarks, cell=0.05):
@@ -28,7 +28,7 @@ def furniture(V, space, landmarks, cell=0.05):
     for lo, hi, guess in ((0.2, 0.62, "seat"), (0.62, 0.86, "table"), (0.86, 1.21, "counter")):
         mask = ((hmap >= lo) & (hmap < hi)).astype(np.uint8)
         mask = cv.morphologyEx(cv.morphologyEx(mask, cv.MORPH_CLOSE, np.ones((5, 5), np.uint8)), cv.MORPH_OPEN, np.ones((5, 5), np.uint8))
-        for r0, c0, r1, c1 in floorplan.rects_of(mask.astype(bool), cell, 0.15, 0.3):
+        for r0, c0, r1, c1 in rects_of(mask.astype(bool), cell, 0.15, 0.3):
             bx0, bx1, by0, by1 = x0 + c0 * cell, x0 + c1 * cell, y0 + r0 * cell, y0 + r1 * cell
             bx0, by0 = (x0 if bx0 < x0 + 0.25 else bx0), (y0 if by0 < y0 + 0.25 else by0)  # flush to the wall it touches
             bx1, by1 = (x1 if bx1 > x1 - 0.25 else bx1), (y1 if by1 > y1 - 0.25 else by1)
