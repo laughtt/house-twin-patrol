@@ -5,7 +5,7 @@ Microduck robot then patrols that home with **zero stickers**: it knows where it
 twin, checks itself with OpenCV on its own camera, and asks a person when it is unsure. Contest category: **Agentic
 Vision** (OpenCV AI Competition 2026). Team: Jose Mauricio Carpio.
 
-**Technical report: [REPORT.md](REPORT.md). Test it without an iPhone: [TESTING.md](TESTING.md).** **Run it: `scripts/demo.sh offline | live | server | app`. Full walkthrough, commands, results and limits: [DEMO.md](DEMO.md).** The agent loop and its trace: [agent/README.md](agent/README.md).
+**Technical report: [REPORT.md](REPORT.md). Project story: [docs/PROJECT_STORY.md](docs/PROJECT_STORY.md). Test it without an iPhone: [TESTING.md](TESTING.md).** **Run it: `scripts/demo.sh offline | live | server | app`. Full walkthrough, commands, results and limits: [DEMO.md](DEMO.md).** The agent loop and its trace: [agent/README.md](agent/README.md).
 
 ![Architecture](docs/architecture.svg)
 
