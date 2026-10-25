@@ -40,7 +40,7 @@ server)
     cd service && uv run --python 3.12 --with-requirements requirements.txt uvicorn app:app --host 127.0.0.1 --port 8790
     ;;
 app)
-    cd lidar/app && xcodegen generate && open HouseTwinLidar.xcodeproj
+    cd app && xcodegen generate && open HouseTwinLidar.xcodeproj
     ;;
 *)
     sed -n 2,6p "$0"; exit 1

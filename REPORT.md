@@ -29,7 +29,7 @@ robot developers test in a copy of a real home before shipping.
 ## 3. Architecture
 ![Architecture](docs/architecture.svg)
 
-1. **iPhone app** (`lidar/app`, SwiftUI): records RGB, LiDAR depth and the ARKit pose with room taps; sign in; upload;
+1. **iPhone app** (`app`, SwiftUI): records RGB, LiDAR depth and the ARKit pose with room taps; sign in; upload;
    My maps (building → ready, floor plan, 3D).
 2. **Server on AWS** (`service/`, `infra/`): FastAPI behind Caddy (HTTPS) on EC2 Graviton4; login with signed tokens;
    runs the twin build for each upload.
@@ -91,7 +91,7 @@ scripts/demo.sh server               # the server locally
 scripts/demo.sh app                  # the Xcode project
 ```
 Dependencies: `requirements.lock` (sim, brain, eval), `service/requirements.lock` (server), XcodeGen `project.yml`
-(app). Server deploy and the judge account: `lidar/app/README.md`. Full walkthrough: `DEMO.md`.
+(app). Server deploy and the judge account: `app/README.md`. Full walkthrough: `DEMO.md`.
 
 ## 7. Evaluation
 **Self-location, 22 houses × 4 seeds × 2 sensors** (`eval/selfloc.py`; "rough" = 2.5 m range, 20 % dropped zones):

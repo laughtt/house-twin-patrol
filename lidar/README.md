@@ -1,12 +1,12 @@
 # LiDAR capture → house.json
 
-`app/` is an iPhone app that records RGB, LiDAR depth and the ARKit pose while you walk through the house.
+`../app/` is the iPhone app that records RGB, LiDAR depth and the ARKit pose while you walk through the house.
 `pipeline/build_house.py` turns one recording into `house.json` (PLAN §6.3), `top.png`, `cloud.ply` and `report.json`.
 
 ## Install the app (once, about 10 min)
 Needs an iPhone with LiDAR (12 Pro or newer Pro model) and a free Apple ID. Other phones show a "no LiDAR" message.
 
-1. On the Mac, open `house-twin-patrol/lidar/app/HouseTwinLidar.xcodeproj` in Xcode.
+1. On the Mac, open `house-twin-patrol/app/HouseTwinLidar.xcodeproj` in Xcode.
 2. Click the blue **HouseTwinLidar** project → target **HouseTwinLidar** → **Signing & Capabilities**:
    tick *Automatically manage signing*, set **Team** to your Apple ID (Personal Team; add it under Xcode → Settings → Accounts if needed).
    `project.yml` sets Mauricio's team and `io.housetwinpatrol.lidar.mc`; on another Apple ID pick your team and a unique
@@ -23,7 +23,7 @@ Free (personal team) apps stop opening after 7 days: plug in and press Run again
 The robot duck films from about 20 cm above the floor and finds its place from fixed objects and the look of each room,
 so every zone needs a chest-height sweep, a slow duck-height turn and a few tagged objects. A checklist card guides this per zone.
 
-1. Sign in with your account (see `app/README.md` for the server side); Settings has the zone list and the tag labels.
+1. Sign in with your account (see `../app/README.md` for the server side); Settings has the zone list and the tag labels.
 2. Good light, doors open. Tap the zone you start in, then **Start**. Point at the floor for a moment: the HUD shows
    "Height 1.32 m" once ARKit has found it.
 3. **Walls**: walk slowly (about half a normal pace), the phone at chest height and tilted a little down so the floor shows,

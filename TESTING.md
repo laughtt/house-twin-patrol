@@ -68,7 +68,7 @@ Server: `https://game.adtomic.co` (AWS EC2 Graviton4). The user name and passwor
 
 ## D. The iPhone app (optional)
 Needs an iPhone with LiDAR and Xcode: `scripts/demo.sh app`, then sign in with the judge account. My maps shows the
-sample map. Build and signing: `lidar/app/README.md`. Screenshots: `docs/app_screens.jpg`.
+sample map. Build and signing: `app/README.md`. Screenshots: `docs/app_screens.jpg`.
 
 ## E. The live robot (optional)
 Needs Pollen's duck-sim (`~/Pollen/microduck`, `~/Pollen/microduck_rl`) with the house as its scene:

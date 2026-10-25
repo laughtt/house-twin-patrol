@@ -26,7 +26,7 @@
   <text x="52" y="222" class="s">sign in (token in the Keychain)</text>
   <text x="52" y="242" class="s">My maps: building → ready,</text>
   <text x="52" y="262" class="s">floor plan + 3D</text>
-  <text x="52" y="282" class="m">lidar/app</text>
+  <text x="52" y="282" class="m">app</text>
 
   <!-- server -->
   <rect class="box" x="450" y="100" width="300" height="250"/>

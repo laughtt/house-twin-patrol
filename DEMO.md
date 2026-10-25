@@ -25,20 +25,20 @@ Judges: [TESTING.md](TESTING.md) tests everything without the iPhone app (a buil
 scripts/demo.sh offline              # on samples/synth-multi: self-location, camera test, fast tests (1 min)
 scripts/demo.sh live [house] [--ask] # live walk on Pollen's duck-sim with the camera, then the film
 scripts/demo.sh server               # the app's server locally (API_KEY, TOKEN_SECRET, APP_PASSWORD_HASH)
-scripts/demo.sh app                  # generate and open the Xcode project (lidar/app)
+scripts/demo.sh app                  # generate and open the Xcode project (app)
 ```
 
 ## 0. Setup (once)
 - `uv` and Python 3.12. Every command runs with OpenCV 5: `--with opencv-python-headless==5.0.0.93`.
 - Live robot demo: Pollen's duck-sim (`~/Pollen/microduck`, `~/Pollen/microduck_rl`) with the scanned house as its
   MuJoCo scene, gstreamer for the camera (`brew install gstreamer libnice-gstreamer`).
-- iPhone with LiDAR (12 Pro or later) for the app. See `lidar/app/README.md`.
+- iPhone with LiDAR (12 Pro or later) for the app. See `app/README.md`.
 
 All commands below run from the repo root.
 
 ## 1. The app: from a walk to a map
-The iPhone app (`lidar/app`, SwiftUI) records RGB, LiDAR depth and the ARKit pose while you walk, uploads it, and
-shows your maps once the server has built them. Build and server setup: `lidar/app/README.md`.
+The iPhone app (`app`, SwiftUI) records RGB, LiDAR depth and the ARKit pose while you walk, uploads it, and
+shows your maps once the server has built them. Build and server setup: `app/README.md`.
 
 ![Sign in, My maps, floor plan, 3D, dark mode](docs/app_screens.jpg)
 
@@ -55,7 +55,7 @@ shows your maps once the server has built them. Build and server setup: `lidar/a
 Server side: `POST /auth/login` gives a signed token (30 days, HMAC-SHA256, scrypt password hash, 5 failed tries per
 10 min); every endpoint takes it or the old key; `GET /lidar/maps` lists maps with their state. Tests:
 `uv run --python 3.12 --with-requirements service/requirements.txt --with pytest --with httpx python -m pytest service/test_auth.py -q`.
-The screenshots (all nine in `lidar/app/screenshots/`) are the Xcode build in the iOS Simulator, showing a synthetic
+The screenshots (all nine in `app/screenshots/`) are the Xcode build in the iOS Simulator, showing a synthetic
 flat.
 
 ## 2. The twin: how the map is built

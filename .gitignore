@@ -3,7 +3,7 @@ data/
 out/
 service/uploads/
 service/models/
-lidar/app/build/
+app/build/
 *.onnx
 *.zip
 __pycache__/

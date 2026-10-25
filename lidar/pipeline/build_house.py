@@ -1,4 +1,4 @@
-"""iPhone LiDAR export (lidar/app) → house.json (PLAN §6.3), top.png, cloud.ply, report.json. OpenCV 5.
+"""iPhone LiDAR export (app) → house.json (PLAN §6.3), top.png, cloud.ply, report.json. OpenCV 5.
 
 uv run --python 3.12 --with opencv-python-headless==5.0.0.93 --with boto3 python lidar/pipeline/build_house.py <export.zip|folder> [out_dir]
 

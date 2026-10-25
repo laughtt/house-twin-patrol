@@ -1,4 +1,4 @@
-"""Read one iPhone LiDAR export (lidar/app, format in lidar/README.md): a zip or an unpacked folder.
+"""Read one iPhone LiDAR export (app, format in lidar/README.md): a zip or an unpacked folder.
 
 ARKit world is y up (gravity), camera x right / y up / z back. OpenCV camera is x right / y down / z forward,
 so T_cv = T_ar · diag(1,-1,-1,1); the house frame is z up: (x, y, z) = (x_ar, -z_ar, y_ar).

@@ -1,5 +1,5 @@
 """Draws the app icon and the launch logo into the asset catalog. From house-twin-patrol/:
-uv run --with opencv-python-headless python lidar/app/make_icon.py
+uv run --with opencv-python-headless python app/make_icon.py
 """
 from pathlib import Path
 
