@@ -11,12 +11,18 @@ targets:
       path: HouseTwinLidar/Info.plist
       properties:
         CFBundleDisplayName: Twin LiDAR
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        ServerURL: $(SERVER_URL)
+        ITSAppUsesNonExemptEncryption: false
         NSCameraUsageDescription: The camera and LiDAR measure your home to build its floor plan.
         UIRequiredDeviceCapabilities: [arkit]
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
-        UILaunchScreen: {}
+        UILaunchScreen:
+          UIColorName: LaunchBackground
+          UIImageName: LaunchLogo
         UIRequiresFullScreen: true
     settings:
       base:
@@ -25,3 +31,8 @@ targets:
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SERVER_URL: https://game.adtomic.co
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
