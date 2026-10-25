@@ -19,6 +19,14 @@ the camera's colours say, and the moments OpenCV changed the plan or the duck as
 
 Contest category: **Agentic Vision**. The checklist with evidence is in [section 6](#6-agentic-vision-evidence).
 
+## Quick start
+```
+scripts/demo.sh offline              # sandbox, camera test, fast tests: no robot needed (~5 min)
+scripts/demo.sh live [house] [--ask] # live walk on Pollen's duck-sim with the camera, then the film
+scripts/demo.sh server               # the app's server locally (API_KEY, TOKEN_SECRET, APP_PASSWORD_HASH)
+scripts/demo.sh app                  # generate and open the Xcode project (lidar/app)
+```
+
 ## 0. Setup (once)
 - `uv` and Python 3.12. Every command runs with OpenCV 5: `--with opencv-python-headless==5.0.0.93`.
 - Live robot demo: Pollen's duck-sim (`~/Pollen/microduck`, `~/Pollen/microduck_rl`) with the scanned house as its
