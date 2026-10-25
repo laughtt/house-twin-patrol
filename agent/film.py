@@ -156,8 +156,8 @@ def main():
              (24, 262), 0.7, (110, 220, 120))
         ev = next((t for t in trace[k:max(0, k - 60):-1] if t.get("event") in ("vision_decision", "approval")), None)
         if ev and tw - ev["wall"] < 4:  # OpenCV changed what the brain does, or it asked a person
-            msg = (f"camera changed the plan ({ev['cause']}): {ev['before']['mode']} -> {ev['after']['mode']}, "
-                   f"room {ev['after']['room'] or '?'}".replace("_", " ") if ev["event"] == "vision_decision"
+            msg = (f"OpenCV changed the plan [{ev['cause']}]: {ev['before']['mode']} -> {ev['after']['mode']}, "
+                   f"thinks it's in: {ev['after']['room'] or 'a doorway'}".replace("_", " ") if ev["event"] == "vision_decision"
                    else f"asked a person: keep looking? -> {'yes' if ev['answer'] else 'no, stop'} ({ev['by']})")
             text(strip, msg, (24, 292), 0.65, (120, 200, 255), 2)
         text(strip, "Pollen Microduck - real robotd + trained walking policy (ONNX, 50 Hz) in MuJoCo - zero stickers", (24, 316), 0.6, (150, 150, 150))

@@ -10,6 +10,11 @@ iPhone app ──upload──► server builds the twin (OpenCV 5) ──house.j
   sign in, My maps        3D view, floor plan                  OpenCV on the camera → decisions → a person's OK
 ```
 
+![The agent loop on the live duck: real values from the live walk](docs/agent_loop.gif)
+
+*The agent loop on the live walk, real values from its trace: the 8×8 ToF zones, how sure it is, what it thinks vs what
+the camera's colours say, and the moments OpenCV changed the plan or the duck asked a person (yellow edges).*
+
 Contest category: **Agentic Vision**. The checklist with evidence is in [section 6](#6-agentic-vision-evidence).
 
 ## 0. Setup (once)
@@ -24,22 +29,23 @@ All commands below run from the repo root.
 The iPhone app (`lidar/app`, SwiftUI) records RGB, LiDAR depth and the ARKit pose while you walk, uploads it, and
 shows your maps once the server has built them. Build and server setup: `lidar/app/README.md`.
 
-1. **Sign in** with the demo account; the session lasts 30 days on this phone. ![](lidar/app/screenshots/1-login.png)
+![Sign in, My maps, floor plan, 3D, dark mode](docs/app_screens.jpg)
+
+1. **Sign in** with the demo account; the session lasts 30 days on this phone.
 2. **Record.** Tap the zone you are in, then **Start recording**. Sweep every wall, do a slow duck-height turn and tag
    fixed objects. Tap **Doorway** and the new zone when you change room, then **Stop**.
 3. **Check and review.** The recording check scores zones, low views, tags and size; **Review zones & tags** fixes
    room boundaries and tag labels.
 4. **Upload**, then **Watch it build**.
 5. **My maps** lists every walk with its state and updates by itself; a notification says when one is ready.
-   ![](lidar/app/screenshots/2-my-maps.png)
 6. **Open the map:** the floor plan (pinch to zoom, room sizes, share) and the **3D** point cloud with landmarks.
-   ![](lidar/app/screenshots/3-floor-plan.png)
 7. A failed build has **Build again**; a phone without LiDAR still opens My maps; Settings has **Sign out**.
 
 Server side: `POST /auth/login` gives a signed token (30 days, HMAC-SHA256, scrypt password hash, 5 failed tries per
 10 min); every endpoint takes it or the old key; `GET /lidar/maps` lists maps with their state. Tests:
 `uv run --python 3.12 --with-requirements service/requirements.txt --with pytest --with httpx python -m pytest service/test_auth.py -q`.
-The screenshots show a synthetic flat.
+The screenshots (all nine in `lidar/app/screenshots/`) are the Xcode build in the iOS Simulator, showing a synthetic
+flat.
 
 ## 2. The twin: how the map is built
 ```
@@ -136,7 +142,7 @@ with a banner whenever the camera changed the plan or the duck asked a person.
 | 0:00–0:40 | the app: sign in, record a walk with zone taps, upload | "One walk with an iPhone is all the setup." |
 | 0:40–1:20 | My maps: building → ready; floor plan and 3D | "OpenCV 5 turns the walk into a floor plan: walls, doors, rooms." |
 | 1:20–1:50 | `twin/plan` stage pictures | "Four stages, each a few OpenCV calls." |
-| 1:50–3:30 | live film (2×): spin, "sure", walking, banners | "Pollen's real robot software walks the duck; our brain only steers. It turns once to find itself, checks every belief against the depth sensor, and the camera's OpenCV checks change its decisions." |
+| 1:50–3:30 | live film (2×, `out/walk/<house>/walk_2x.mp4`): spin, "sure", walking, banners; `docs/agent_loop.gif` as the loop overlay | "Pollen's real robot software walks the duck; our brain only steers. It turns once to find itself, checks every belief against the depth sensor, and the camera's OpenCV checks change its decisions." |
 | 3:30–4:10 | an approval moment in the trace / terminal | "When it's unsure, it asks." |
 | 4:10–5:00 | results tables and the limits below | "What works, what doesn't yet." |
 
