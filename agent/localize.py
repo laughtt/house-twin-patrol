@@ -1,96 +1,29 @@
-"""Where is the duck? A particle filter on the house map (house.json frame: metres, z up).
+"""Where is the duck? A particle filter on the house map (house.json frame: metres, z up). The jobs live in agent/loc/;
+this runs them each tick:
 
-Odometry moves the guesses; the 8x8 ToF (its two level rows) scores them against the map; recognised objects (fixed
-ones count most) and the room's colour pick the right place even from an unknown start; an ArUco marker, if any, snaps them.
+odometry → predict (and the spin stack's turn) · ToF → tof.read → tof.score → weights; a full turn on the spot →
+spin.match over the whole map → guesses re-seeded there · camera → landmarks (objects, room colour, ArUco) ·
+estimate → fit.check → confidence, capped while the spin match or the fit check says "not sure yet".
+
+Settings (all off = the filter before spin match, eval/selfloc.py's "base"): rowfix (zones from the rows that measured
+them), spin (not sure until a full turn matches one place), fit (verify the estimate against the ToF), relook (match
+again when the fit stays poor), tof_max (the sensor's range), jump (a sure duck doesn't teleport: an estimate far from
+the last trusted pose, carried by odometry, is a false positive; the guesses still near that pose are the answer, and
+if none are left the duck looks again, nearby first).
 """
 import math
 
-import cv2 as cv
 import numpy as np
 
-CELL = 0.02
-TOF_AZ = -np.radians((np.arange(8) + 0.5) / 8 * 45 - 22.5)  # zone columns, col 0 = the sensor's left (+)
-TOF_MAX = 4.0
-
-
-class HouseMap:
-    """What a sensor 20 cm above the floor can hit: walls, solid furniture, and only the legs of tables and chairs."""
-
-    def __init__(self, house, eye_h=0.2, occupancy=None):
-        xs = [p for w in house["walls"] for p in (w["a"][0], w["b"][0])]
-        ys = [p for w in house["walls"] for p in (w["a"][1], w["b"][1])]
-        self.o = np.minimum(0.0, [min(xs), min(ys)])  # grid origin: (0, 0), or lower if a room lies west or south of it
-        self.W, self.L = max(xs) - self.o[0], max(ys) - self.o[1]
-        self.grid = np.zeros((int(self.L / CELL) + 3, int(self.W / CELL) + 3), bool)
-        self.grid[:, :1] = self.grid[:, -2:] = self.grid[:1, :] = self.grid[-2:, :] = True
-        for w in house["walls"]:  # every wall, interior ones too, as thick as it is
-            a, b = (((np.array(w[k]) - self.o) / CELL + 1).astype(int) for k in ("a", "b"))
-            self.grid |= cv.line(np.zeros(self.grid.shape, np.uint8), tuple(int(v) for v in a), tuple(int(v) for v in b), 1,
-                                 max(1, int(round(w["t"] / CELL)))).astype(bool)
-        for o in house["objects"]:
-            (cx, cy), (w, d, h), yaw = o["center"], o["size"], o["yaw"]
-            legs = o["kind"] == "table" or o["label"] == "chair"
-            if h < eye_h - 0.06 and not legs:  # the ToF rows look ±3° off level: from ~1 m they hit things 6 cm lower
-                continue
-            c, s = math.cos(yaw), math.sin(yaw)
-            parts = [(sx * (w / 2 - 0.04), sy * (d / 2 - 0.04), 0.02, 0.02) for sx in (-1, 1) for sy in (-1, 1)] if legs else [(0, 0, w / 2, d / 2)]
-            for px, py, hw, hd in parts:
-                u, v = np.meshgrid(np.arange(-hw, hw + CELL, CELL / 2), np.arange(-hd, hd + CELL, CELL / 2))
-                x, y = cx + (px + u) * c - (py + v) * s - self.o[0], cy + (px + u) * s + (py + v) * c - self.o[1]
-                ok = (x >= 0) & (x < self.W) & (y >= 0) & (y < self.L)
-                self.grid[(y[ok] / CELL).astype(int) + 1, (x[ok] / CELL).astype(int) + 1] = True
-        if occupancy:  # the scan's real surfaces at the sensor's height (house.json "occupancy"), beyond walls and boxes
-            z = np.load(occupancy)
-            band = z["occ"][max(int((eye_h - 0.1) / z["dz"]), 0):int((eye_h + 0.1) / z["dz"]) + 1].any(0)
-            band = cv.morphologyEx(band.astype(np.uint8), cv.MORPH_CLOSE, np.ones((3, 3), np.uint8)).astype(bool)  # 5 cm gaps
-            yy, xx = np.mgrid[0:self.grid.shape[0], 0:self.grid.shape[1]]
-            i = (((yy - 1) * CELL + self.o[1] - z["lo"][1]) / z["cell"]).astype(int)
-            j = (((xx - 1) * CELL + self.o[0] - z["lo"][0]) / z["cell"]).astype(int)
-            ok = (i >= 0) & (j >= 0) & (i < band.shape[0]) & (j < band.shape[1])
-            self.grid[ok] |= band[i[ok], j[ok]]
-        self.markers = {m["id"]: m for m in house.get("markers", [])}
-        self.landmarks = [lm for lm in house.get("landmarks", []) if lm.get("cls") and lm.get("weight", 0) > 0]
-        self.rooms = house.get("rooms", [])
-        self.room_of = np.full(self.grid.shape, -1, np.int16)  # which room each cell is in (-1: outside every room)
-        for k, r in enumerate(self.rooms):
-            for x0, y0, x1, y1 in r["rects"]:
-                (x0, y0), (x1, y1) = np.subtract([x0, y0], self.o), np.subtract([x1, y1], self.o)
-                self.room_of[int(y0 / CELL) + 1:int(y1 / CELL) + 2, int(x0 / CELL) + 1:int(x1 / CELL) + 2] = k
-        self.clear = cv.distanceTransform((~self.grid).astype(np.uint8), cv.DIST_L2, 5) * CELL  # metres to the nearest hit
-
-    def room(self, x, y):
-        i = np.clip(((np.asarray(y) - self.o[1]) / CELL).astype(int) + 1, 0, self.grid.shape[0] - 1)
-        j = np.clip(((np.asarray(x) - self.o[0]) / CELL).astype(int) + 1, 0, self.grid.shape[1] - 1)
-        return self.room_of[i, j]
-
-    def free(self, x, y):
-        i, j = ((np.asarray(y) - self.o[1]) / CELL).astype(int) + 1, ((np.asarray(x) - self.o[0]) / CELL).astype(int) + 1
-        inside = (i >= 0) & (i < self.grid.shape[0]) & (j >= 0) & (j < self.grid.shape[1])
-        return inside & ~self.grid[np.clip(i, 0, self.grid.shape[0] - 1), np.clip(j, 0, self.grid.shape[1] - 1)]
-
-    def raycast(self, x, y, angle, step=0.02):
-        """Distance to the first hit for many rays at once (TOF_MAX + 1 when nothing within range). Same samples as a
-        2 cm march from 5 cm out, but each ray jumps over the ones that the distance map says can't hit anything."""
-        x, y, angle = np.broadcast_arrays(*(np.asarray(v, float) for v in (x, y, angle)))
-        shape, x, y = x.shape, x.ravel(), y.ravel()
-        c, s = np.cos(angle).ravel(), np.sin(angle).ravel()
-        dist, k, idx = np.full(x.size, TOF_MAX + 1.0), np.zeros(x.size, np.int64), np.arange(x.size)
-        last = int(round((TOF_MAX - 0.05) / step))
-        while idx.size:
-            r = 0.05 + k[idx] * step
-            i = ((y[idx] + r * s[idx] - self.o[1]) / CELL).astype(int) + 1
-            j = ((x[idx] + r * c[idx] - self.o[0]) / CELL).astype(int) + 1
-            inside = (i >= 0) & (i < self.grid.shape[0]) & (j >= 0) & (j < self.grid.shape[1])
-            d = np.where(inside, self.clear[i.clip(0, self.grid.shape[0] - 1), j.clip(0, self.grid.shape[1] - 1)], 0.0)
-            hit = d == 0
-            dist[idx[hit]] = r[hit]
-            k[idx] += np.maximum(1, ((0.98 * d - 1.5 * CELL) / step).astype(np.int64))  # a point this far from any obstacle cell
-            idx = idx[~hit & (k[idx] <= last)]
-        return dist.reshape(shape)
+from agent.loc import CELL, TOF_AZ, TOF_MAX, _wrap, landmarks, tof  # noqa: F401 - re-exported for callers
+from agent.loc.fit import Fit
+from agent.loc.housemap import HouseMap  # noqa: F401 - re-exported
+from agent.loc.spin import Spin
 
 
 class ParticleFilter:
-    def __init__(self, house_map, x, y, yaw, n=400, spread=(0.05, 0.05), seed=0):
+    def __init__(self, house_map, x, y, yaw, n=400, spread=(0.05, 0.05), seed=0, rowfix=True, spin=True, fit=True,
+                 relook=True, tof_max=TOF_MAX, jump=True):
         self.map, self.n, self.rng = house_map, n, np.random.default_rng(seed)
         self.p = np.c_[x + self.rng.normal(0, spread[0], n), y + self.rng.normal(0, spread[0], n), yaw + self.rng.normal(0, spread[1], n)]
         self.w = np.full(n, 1 / n)
@@ -98,12 +31,20 @@ class ParticleFilter:
         self.w_slow = self.w_fast = None  # long- and short-term average ToF fit: a sudden drop = picked up and moved
         self.last_tof = None
         self.blind = 0  # ToF frames in a row with no target at all
+        self.rowfix, self.relook, self.tof_max = rowfix, relook, tof_max
+        self.spin = Spin(matched=True) if spin else None  # a known start needs no match
+        self.fit = Fit() if fit or relook else None
+        self.cap_fit, self.ranges, self.est = fit, None, None
+        self.jump = jump and spin and fit
+        self.anchor, self.walked = None, 0.0  # the last pose the fit check trusted, carried by odometry; metres since
 
     @classmethod
-    def anywhere(cls, house_map, n=2000, seed=0):
+    def anywhere(cls, house_map, n=2000, seed=0, **settings):
         """Unknown start (switched on, or picked up and put down): guesses over every free cell of every room, any heading."""
-        pf = cls(house_map, 0.0, 0.0, 0.0, n=n, seed=seed)
+        pf = cls(house_map, 0.0, 0.0, 0.0, n=n, seed=seed, **settings)
         pf.p = pf._random_poses(n)
+        if pf.spin:
+            pf.spin.matched = False
         return pf
 
     def _random_poses(self, k):
@@ -129,117 +70,53 @@ class ParticleFilter:
         # routes that pass close to furniture: 65 % → 89 % of the time within 0.3 m when that rule went.)
         self.w *= self.map.free(self.p[:, 0], self.p[:, 1]) * 0.99 + 0.01
         self._normalise()
+        if self.spin:
+            self.spin.odometry(forward, left, turn)
+        if self.anchor is not None:
+            x, y, a = self.anchor
+            self.anchor = (x + forward * math.cos(a) - left * math.sin(a), y + forward * math.sin(a) + left * math.cos(a), a + turn)
+            self.walked += d
 
     def update_tof(self, dist_mm, status):
-        """The two level rows (3 and 4) against the map: 16 ranges per particle. Status 254 = no data for that zone
-        (an emulated sensor that does not cover it), which is skipped rather than read as "nothing in range"."""
-        meas = np.array(dist_mm, float).reshape(8, 8)[3:5] / 1000.0
-        valid = (np.array(status).reshape(8, 8)[3:5] == 5) & np.isfinite(meas)
-        known = (np.array(status).reshape(8, 8)[3:5] != 254).any(0)
+        """The two level rows against the map. Status 254 = no data for that zone (an emulated sensor that does not
+        cover it), which is skipped rather than read as "nothing in range"."""
+        meas, valid, known, zones, self.ranges = tof.read(dist_mm, status, self.rowfix, self.tof_max)
         frame = np.r_[meas.ravel(), valid.ravel()]
         frozen = self.last_tof is not None and np.array_equal(frame, self.last_tof)
         self.last_tof = frame
         self.blind = 0 if valid.any() else self.blind + 1
         # stuck, covered, or no target for 5 s (open space says "nothing within 4 m" for a moment; a dead sensor for ever)
         if frozen or self.blind > 25 or (valid.any() and (meas[valid] < 0.05).all()):
+            self.ranges = np.full(8, np.nan)  # nothing the fit check can verify either
             return
-        meas = np.where(valid, meas, TOF_MAX + 1.0).mean(0)  # rows 3 and 4 look 2.8° up and down: average them
-        x, y, yaw = (np.repeat(self.p[:, k:k + 1], 8, 1) for k in range(3))
-        exp = self.map.raycast(x, y, yaw + TOF_AZ)
-        sigma = 0.05 + 0.03 * np.minimum(exp, TOF_MAX)
-        both_far = (exp > TOF_MAX) & (meas > TOF_MAX)
-        like = np.where(both_far | ~known, 1.0, np.exp(-0.5 * ((meas - exp) / sigma) ** 2)) * 0.9 + 0.1  # 0.1: things not on the map
-        fit = np.exp(np.log(like).sum(1) / 4)  # tempered: 8 zones are not independent evidence
+        fit = tof.score(self.map, self.p, zones, known, self.tof_max)
         avg = float(np.sum(self.w * fit))
         self.w_slow = avg if self.w_slow is None else self.w_slow + 0.01 * (avg - self.w_slow)
         self.w_fast = avg if self.w_fast is None else self.w_fast + 0.1 * (avg - self.w_fast)
         self.w *= fit
         self._normalise()
         lost = 1 - self.w_fast / max(self.w_slow, 1e-12)
-        if lost > 0.6 and valid.any(0).sum() >= 5:  # walls in view that stopped matching (not just open space): try fresh guesses
+        # walls in view that stopped matching (not just open space): try fresh guesses; while a trusted pose is held,
+        # relook matches again instead, nearby first
+        if lost > 0.6 and valid.any(0).sum() >= 5 and self.anchor is None:
             k = self.rng.choice(self.n, max(1, int(self.n * min(0.02, 0.05 * lost))), replace=False)
             self.p[k] = self._random_poses(len(k))
             self.w[k] = self.w.mean()
+        if self.spin and not self.spin.matched and self.spin.add(self.ranges, known & ~valid.any(0)):
+            self.p = Spin.seeds(self.spin.match(self.map, self.tof_max), self.n, self.rng)
+            self.w, self.last, self.anchor, self.spin.near = np.full(self.n, 1 / self.n), None, None, None
+            if self.fit:  # the old fits judged the guesses before the match
+                self.fit.hist = []
 
     def update_landmarks(self, dets, hfov):
-        """Objects the camera recognised: [{cls, bearing (rad, + = left), range (m) or None}]. Each scores every guess by
-        the mapped landmark of that class that best explains it (in view, not behind a wall), times how much that kind
-        of thing stays put (house.json weight: fixed 1, rarely moved 0.6, often moved 0.2)."""
-        x, y, yaw = self.p.T
-        dets = [{**d, "range": d.get("range") if d.get("range") is not None and np.isfinite(d["range"]) and d["range"] > 0 else None}
-                for d in dets if np.isfinite(d.get("bearing", np.nan))]
-        for d in sorted(dets, key=lambda d: -d.get("score", 0))[:8]:  # a cluttered frame: the 8 surest sightings
-            best = np.zeros(self.n)
-            for lm in self.map.landmarks:
-                if lm["cls"] != d["cls"]:
-                    continue
-                dx, dy = lm["center"][0] - x, lm["center"][1] - y
-                r, rad = np.hypot(dx, dy), max(lm["size"][:2]) / 2
-                b = _wrap(np.arctan2(dy, dx) - yaw)
-                like = np.exp(-0.5 * (_wrap(d["bearing"] - b) / (np.radians(4) + np.arctan2(rad, np.maximum(r, 0.3)))) ** 2)
-                if d.get("range") is not None:
-                    like *= np.exp(-0.5 * ((d["range"] - np.maximum(r - 0.7 * rad, 0.1)) / (0.1 + 0.2 * r)) ** 2)
-                like *= (np.abs(b) < hfov / 2 + np.arctan2(rad, np.maximum(r, 0.3))) & (r < 5.0)
-                k = np.nonzero(like * lm["weight"] > best + 1e-3)[0]  # only guesses this landmark could improve
-                if len(k):
-                    seen = self.map.raycast(x[k], y[k], yaw[k] + b[k]) >= np.minimum(r[k] - rad - 0.3, TOF_MAX)
-                    best[k] = np.maximum(best[k], lm["weight"] * like[k] * seen)
-            fixed = [lm for lm in self.map.landmarks if lm["cls"] == d["cls"] and lm["weight"] >= 0.6]
-            if fixed:  # trusted sightings that no guess explains, three in a row: the guesses are probably all wrong
-                c = d["cls"]
-                self.misfit[c] = self.misfit.get(c, 0) + 1 if np.sum(self.w * best) < 0.1 else 0
-                if self.misfit[c] >= 3:
-                    k = self._reseed(d, fixed)
-                    best[k] = 1.0
-                    x, y, yaw = self.p.T
-                    self.misfit[c] = 0
-            self.w *= 0.2 + 0.8 * best  # 0.2: the detector can be wrong, or the thing was moved
-        self._normalise()
-
-    def _reseed(self, d, fixed, share=0.05):
-        """Replace a share of the guesses with poses that would see one of these landmarks this way (sensor resetting)."""
-        k = self.rng.choice(self.n, max(1, int(self.n * share)), replace=False)
-        lm = [fixed[i] for i in self.rng.integers(len(fixed), size=len(k))]
-        c = np.array([m["center"] for m in lm])
-        r = (np.full(len(k), d["range"]) + 0.7 * np.array([max(m["size"][:2]) / 2 for m in lm]) if d.get("range") is not None
-             else self.rng.uniform(0.5, 4.0, len(k))) * self.rng.normal(1, 0.1, len(k))
-        yaw = self.rng.uniform(-np.pi, np.pi, len(k))
-        a = yaw + d["bearing"] + self.rng.normal(0, np.radians(4), len(k))
-        self.p[k] = np.c_[c[:, 0] - r * np.cos(a), c[:, 1] - r * np.sin(a), yaw]
-        self.w[k] = self.w.mean()
-        return k
+        """Objects the camera recognised: [{cls, bearing (rad, + = left), range (m) or None}] (agent/loc/landmarks.py)."""
+        landmarks.update(self, dets, hfov)
 
     def update_room(self, hist, sharp=25.0):
-        """The camera's colour fingerprint against each room's (house.json colour_hs): a weak vote for the room."""
-        sims = np.array([np.sum(np.sqrt(np.asarray(hist) * r["colour_hs"])) if "colour_hs" in r else np.nan for r in self.map.rooms])
-        if not np.isfinite(sims).any():
-            return
-        score = np.r_[np.nan_to_num(np.exp(sharp * (sims - np.nanmax(sims))), nan=1.0), 0.5]  # last: outside every room
-        self.w *= 0.6 + 0.4 * score[self.map.room(self.p[:, 0], self.p[:, 1])]
-        self._normalise()
+        landmarks.room(self, hist, sharp)
 
     def update_marker(self, marker_id, solutions):
-        """One ArUco sighting. IPPE gives two camera poses; keep the one nearest the current guess."""
-        m = self.map.markers[marker_id]
-        n = np.array([math.cos(m["yaw"]), math.sin(m["yaw"]), 0.0])
-        M = np.c_[[-n[1], n[0], 0.0], [0.0, 0.0, 1.0], n]  # marker axes in the house: right, up, out of the face
-        est = self.estimate()
-        poses = []
-        for R, t, _ in solutions:
-            cam = np.array([m["x"], m["y"], m["z"]]) + M @ (-R.T @ t)
-            fwd = M @ (R.T @ [0.0, 0.0, 1.0])
-            poses.append((cam[0], cam[1], math.atan2(fwd[1], fwd[0]), float(np.linalg.norm(t))))
-        x, y, yaw, rng = min(poses, key=lambda q: math.hypot(q[0] - est[0], q[1] - est[1]) + 0.3 * abs(_wrap(q[2] - est[2])))
-        sxy, syaw = 0.03 + 0.04 * rng, math.radians(3 + 2 * rng)
-        d2 = ((self.p[:, 0] - x) ** 2 + (self.p[:, 1] - y) ** 2) / sxy ** 2 + _wrap(self.p[:, 2] - yaw) ** 2 / syaw ** 2
-        self.w *= np.exp(-0.5 * d2) + 1e-6
-        self._normalise()
-        if 1 / np.sum(self.w ** 2) < self.n / 10:  # a sighting far from every guess: re-seed a share of them around it
-            k = self.n // 3
-            self.p[:k] = np.c_[self.rng.normal(x, sxy, k), self.rng.normal(y, sxy, k), self.rng.normal(yaw, syaw, k)]
-            self.w[:k] = self.w.max()
-            self._normalise()
-        return x, y, yaw
+        return landmarks.marker(self, marker_id, solutions)
 
     def estimate(self):
         """The strongest group of guesses (30 cm cells, then everything within 50 cm of the best one): stray guesses
@@ -255,15 +132,46 @@ class ParticleFilter:
         near = lambda q: np.hypot(self.p[:, 0] - q[0], self.p[:, 1] - q[1]) < 0.5  # noqa: E731
         if getattr(self, "last", None) is not None and self.w[near(self.last)].sum() > 0.6 * self.w[near(c)].sum():
             c = self.last  # stay with the place we were at unless another one is clearly stronger
+        if self.jump and self.spin.matched and self.anchor is not None:
+            home = np.hypot(self.p[:, 0] - self.anchor[0], self.p[:, 1] - self.anchor[1]) < self._gate()
+            if math.hypot(c[0] - self.anchor[0], c[1] - self.anchor[1]) > self._gate() and self.w[home].sum() > 0.05:
+                self.w *= np.where(home, 1.0, 0.01)  # a far cluster won: a false positive, its guesses mostly dropped
+                self._normalise()
+                c = np.average(self.p[:, :2], axis=0, weights=self.w * home + 1e-12)
         w = self.w * near(c) + 1e-12
         self.last = (float(np.average(self.p[:, 0], weights=w)), float(np.average(self.p[:, 1], weights=w)))
-        return (*self.last, math.atan2(np.sum(w * np.sin(self.p[:, 2])), np.sum(w * np.cos(self.p[:, 2]))))
+        self.est = (*self.last, math.atan2(np.sum(w * np.sin(self.p[:, 2])), np.sum(w * np.cos(self.p[:, 2]))))
+        return self.est
 
     def confidence(self):
-        """Share of the weight within 50 cm of the last estimate: near 1 = sure where it is, low = several places fit."""
+        """Share of the weight within 50 cm of the last estimate: near 1 = sure where it is, low = several places fit.
+        Capped at 0.5 until the spin match is clear, and by the fit check (fit.cap)."""
         if getattr(self, "last", None) is None:
             self.estimate()
-        return float(self.w[np.hypot(self.p[:, 0] - self.last[0], self.p[:, 1] - self.last[1]) < 0.5].sum())
+        c = float(self.w[np.hypot(self.p[:, 0] - self.last[0], self.p[:, 1] - self.last[1]) < 0.5].sum())
+        if self.fit and self.ranges is not None and self.est is not None:
+            self.fit.check(self.map, self.est, self.ranges, self.tof_max)
+            self.ranges = None  # once per ToF frame
+            if self.relook and self.spin and self.spin.matched and self.fit.lost():
+                self._look_again()
+            elif self.jump and self.spin.matched and self.anchor is not None and \
+                    math.hypot(self.est[0] - self.anchor[0], self.est[1] - self.anchor[1]) > self._gate():
+                self._look_again()  # no guess left near the trusted pose: carried off, or every guess went wrong
+            elif self.jump and self.spin.matched and self.fit.cap() == 1.0:
+                self.anchor, self.walked = self.est, 0.0
+        if self.fit and self.cap_fit:
+            c = min(c, self.fit.cap())
+        return min(c, 0.5) if self.spin and not self.spin.matched else c
+
+    def _gate(self):
+        """How far the estimate may be from the trusted pose carried by odometry (8 % slip, plus a margin)."""
+        return 1.0 + 0.1 * self.walked
+
+    def _look_again(self):
+        """Turn and match again: near the trusted pose first when one is held, the whole house otherwise."""
+        self.spin.matched, self.spin.tries, self.fit.hist = False, 0, []
+        self.spin.near = (*self.anchor[:2], 2.0 + 0.1 * self.walked) if self.anchor is not None else None
+        self.spin.restart()
 
     def _normalise(self):
         total = self.w.sum()
@@ -271,7 +179,3 @@ class ParticleFilter:
         if 1 / np.sum(self.w ** 2) < self.n / 2:  # systematic resampling
             idx = np.searchsorted(np.cumsum(self.w), (self.rng.random() + np.arange(self.n)) / self.n).clip(0, self.n - 1)
             self.p, self.w = self.p[idx], np.full(self.n, 1 / self.n)
-
-
-def _wrap(a):
-    return (np.asarray(a) + np.pi) % (2 * np.pi) - np.pi

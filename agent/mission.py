@@ -30,11 +30,13 @@ SQUEEZE = 0.12  # when no route has that much room (a narrow door): 2 cm to spar
 
 
 def goals(sim):
-    """Room centres when the scan has several rooms, else the landmarks that stay put; each moved to the nearest spot
-    the duck can stand on (≥ 30 cm from the thing it is named after)."""
+    """Room centres (of the room's largest rectangle: an L's arms can meet through a gap the duck can't pass) when the scan
+    has several rooms, else the landmarks that stay put; each moved to the nearest spot the duck can stand on (≥ 30 cm
+    from the thing it is named after)."""
     rooms = sim.house["rooms"]
     if len(rooms) > 1:
-        want = [(r["name"], np.mean([[(a[0] + a[2]) / 2, (a[1] + a[3]) / 2] for a in r["rects"]], 0)) for r in rooms]
+        big = lambda r: max(r["rects"], key=lambda a: (a[2] - a[0]) * (a[3] - a[1]))  # noqa: E731
+        want = [(r["name"], np.array([(big(r)[0] + big(r)[2]) / 2, (big(r)[1] + big(r)[3]) / 2])) for r in rooms]
     else:
         lms = [lm for lm in sim.house["landmarks"] if lm.get("mobility") in ("fixed", "rare")]
         want = [(lm["label"], np.array(lm["center"])) for lm in lms]
@@ -55,7 +57,7 @@ def goals(sim):
     return out
 
 
-def episode(args):
+def episode(args, pf_cls=ParticleFilter, sense=None):
     house_dir, seed, out = args
     sim = TwinSim(house_dir, seed=seed)
     rng = np.random.default_rng(seed)
@@ -65,7 +67,7 @@ def episode(args):
     k = int(rng.integers(len(todo))) if todo else 0
     todo = todo[k:] + todo[:k]  # start the round at a random goal
     true = start = sim.random_pose()
-    pf = ParticleFilter.anywhere(hmap, seed=seed)
+    pf = pf_cls.anywhere(hmap, seed=seed)
     t, trace, results, bumps = 0.0, [], [], 0
     found = None  # first moment it was sure and right
     back = 0  # steps left of backing off after a bump
@@ -74,6 +76,8 @@ def episode(args):
         t0, path, last_plan, goal_bumps = t, None, -9.0, 0
         while t - t0 < GOAL_S and goal_bumps < 12:  # a patrol gives up on a spot it can't reach and moves on
             dist, status = sim.tof(*true)
+            if sense:
+                dist, status = sense(sim, dist, status)
             objs = sim.objects(*true)
             tick = time.perf_counter()
             pf.update_tof(dist, status)
@@ -122,18 +126,22 @@ def episode(args):
         else:
             results.append({"goal": g["name"], "t": round(t - t0, 1), "declared": False, "why": "stuck" if goal_bumps >= 12 else "time"})
     sure = [s for s in trace if "conf" in s and s["conf"] >= SURE]
+    off = [math.hypot(s["est"][0] - s["true"][0], s["est"][1] - s["true"][1]) for s in sure]
     summary = {"seed": seed, "start": [round(v, 3) for v in start[:2]], "goals": len(todo),
                "declared": sum(r["declared"] for r in results),
                "reached": sum(r["declared"] and r["true_dist"] < 0.5 for r in results),
                "found_s": round(found, 1) if found is not None else None, "time_s": round(t, 1), "bumps": bumps,
                "think_ms_per_step": round(1000 * think / max(1, round(t * HZ)), 2), "plans": plans,
                "room_right_pct": round(100 * np.mean([s["room_said"] == s["room_true"] for s in sure]), 1) if sure else None,
-               "err_when_sure_median_m": round(float(np.median([math.hypot(s["est"][0] - s["true"][0], s["est"][1] - s["true"][1]) for s in sure])), 3) if sure else None,
-               "results": results}
-    d = Path(out) / f"seed{seed}"
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "trace.jsonl").write_text("\n".join(json.dumps(s) for s in trace))
-    (d / "summary.json").write_text(json.dumps(summary, indent=1))
+               "err_when_sure_median_m": round(float(np.median(off)), 3) if sure else None,
+               "false_conf_pct": round(100 * float(np.mean(np.array(off) > 0.5)), 1) if sure else None,  # sure but > 50 cm off
+               "first_wrong_s": next((s["t"] for s, e in zip(sure, off) if e > 0.5), None),
+               "false_arrivals": sum(r["declared"] and r["true_dist"] >= 0.5 for r in results), "results": results}
+    if out:
+        d = Path(out) / f"seed{seed}"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "trace.jsonl").write_text("\n".join(json.dumps(s) for s in trace))
+        (d / "summary.json").write_text(json.dumps(summary, indent=1))
     return summary
 
 
