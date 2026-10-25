@@ -45,3 +45,18 @@ def colour_hist(bgr):
     mask = cv.inRange(hsv, (0, 0, 40), (180, 255, 255))
     hist = cv.calcHist([hsv], [0, 1], mask, [16, 8], [0, 180, 0, 256]).ravel()
     return hist / max(hist.sum(), 1)
+
+
+def see(pf, bgr, K, max_range=3.0):
+    """OpenCV on one camera frame, into the filter: the room's colour (a weak vote), then each ArUco marker on the map
+    within max_range (a snap; a farther one is a few pixels across and its pose can be metres off).
+    → (marker ids used, the room the colours look most like)."""
+    hist = colour_hist(bgr)
+    pf.update_room(hist)
+    sims = [np.sum(np.sqrt(hist * r["colour_hs"])) if "colour_hs" in r else -1 for r in pf.map.rooms]
+    ids = []
+    for m in markers(cv.cvtColor(bgr, cv.COLOR_BGR2GRAY), K, {i: m["size_m"] for i, m in pf.map.markers.items()}):
+        if np.linalg.norm(m["solutions"][0][1]) < max_range:
+            pf.update_marker(m["id"], m["solutions"])
+            ids.append(m["id"])
+    return ids, pf.map.rooms[int(np.argmax(sims))]["name"] if max(sims, default=-1) >= 0 else None

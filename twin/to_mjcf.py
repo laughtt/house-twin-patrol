@@ -79,8 +79,9 @@ def house_xml(h, frame):
             geoms.append(f'<geom type="box" pos="{cx:.3f} {cy:.3f} {top / 2:.3f}" size="{w / 2:.3f} {d / 2:.3f} {top / 2:.3f}" euler="0 0 {yaw:.4f}" rgba="{rgba}"/>')
     for m in h.get("markers", []):  # ArUco plates (white border of one cell), 2 mm proud of the surface they're on
         import cv2 as cv
-        img = cv.aruco.generateImageMarker(cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_50), m["id"], 600)
-        cv.imwrite(str(ROBOT / f'aruco_{m["id"]}.png'), cv.copyMakeBorder(img, 100, 100, 100, 100, cv.BORDER_CONSTANT, value=255))
+        if not (ROBOT / f'aruco_{m["id"]}.png').exists():  # rewriting it races twins built side by side
+            img = cv.aruco.generateImageMarker(cv.aruco.getPredefinedDictionary(cv.aruco.DICT_4X4_50), m["id"], 600)
+            cv.imwrite(str(ROBOT / f'aruco_{m["id"]}.png'), cv.copyMakeBorder(img, 100, 100, 100, 100, cv.BORDER_CONSTANT, value=255))
         assets += [f'<texture type="2d" name="aruco{m["id"]}" file="aruco_{m["id"]}.png"/>',
                    f'<material name="aruco{m["id"]}" texture="aruco{m["id"]}" texrepeat="1 1"/>']
         nx, ny, half = math.cos(m["yaw"]), math.sin(m["yaw"]), m["size_m"] * 8 / 12

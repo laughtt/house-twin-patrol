@@ -32,7 +32,7 @@ def _tof_module():
 
 
 class TwinSim:
-    def __init__(self, house_dir=ROOT / "out/current", seed=0, extra_geoms=""):
+    def __init__(self, house_dir=ROOT / "out/current", seed=0, extra_geoms="", stickers=False):
         house_dir = Path(house_dir)
         self.house = json.loads((house_dir / "house.json").read_text())
         f = house_dir / "sim_frame.json"  # written by `python -m twin sim`; any frame works for a test of its own
@@ -45,7 +45,7 @@ class TwinSim:
         self.rng = np.random.default_rng(seed)
         from twin.to_mjcf import house_xml  # this house's own scene, so several houses can run side by side
         tag = f"{os.getpid()}_{seed}"
-        (ROBOT / f"twin_house_{tag}.xml").write_text(house_xml({**self.house, "markers": []}, frame)[0])  # zero stickers
+        (ROBOT / f"twin_house_{tag}.xml").write_text(house_xml(self.house if stickers else {**self.house, "markers": []}, frame)[0])
         xml = ROBOT / f"twin_sim_{tag}.xml"
         xml.write_text(f'''<mujoco model="twin_sim">
   <include file="twin_house_{tag}.xml"/>
@@ -92,6 +92,20 @@ class TwinSim:
         self._place(x, y, yaw)
         self._renderer.update_scene(self.data, camera="eye")
         return self._renderer.render()
+
+    def room_colours(self, n=24):
+        """Each room's colour fingerprint (perceive.colour_hist) as the twin's camera sees it, from n views. The scan's
+        come from real photos, which the twin's plain floors and walls don't look like: on its renders they pick the
+        right room 16 % of the time, these 66 %."""
+        from agent.perceive import colour_hist
+        cells = np.argwhere(~self.blocked & (self.world.room_of >= 0))
+        out = []
+        for k in range(len(self.world.rooms)):
+            mine = cells[self.world.room_of[cells[:, 0], cells[:, 1]] == k]
+            views = [((j - 0.5) * CELL + self.world.o[0], (i - 0.5) * CELL + self.world.o[1], self.rng.uniform(-math.pi, math.pi))
+                     for i, j in mine[self.rng.integers(len(mine), size=n)]] if len(mine) else []
+            out.append(np.mean([colour_hist(cv.cvtColor(self.image(*v), cv.COLOR_RGB2BGR)) for v in views], 0).tolist() if views else None)
+        return out
 
     def objects(self, x, y, yaw, hit=0.7, wrong=0.1, false=0.05):
         out, rng = [], self.rng
