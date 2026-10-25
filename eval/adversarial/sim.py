@@ -23,6 +23,9 @@ ROUTE = [(3.3, 2.4), (3.45, 0.9), (2.0, 0.9), ("face", -math.pi / 2), (3.45, 0.9
 
 
 def real_house():
+    if not REAL.exists():  # a fresh clone: the real flat's twin is private (out/ is not in the repo)
+        import pytest
+        pytest.skip("needs out/current/house.json, the real flat's twin (not in the repo)", allow_module_level=True)
     return json.loads(REAL.read_text())
 
 

@@ -1,0 +1,63 @@
+{
+ "session": "synth-multi",
+ "frames": 262,
+ "frames_used": 262,
+ "frames_low": 0,
+ "voxels": 337601,
+ "tsdf_points": 201374,
+ "floor_offset_m": -1.344,
+ "manhattan_deg": 22.74,
+ "spaces": {
+  "kitchen+living_room": {
+   "w_m": 7.95,
+   "l_m": 6.7,
+   "area_m2": 33.2,
+   "corners": 16
+  },
+  "hallway": {
+   "w_m": 1.25,
+   "l_m": 2.55,
+   "area_m2": 2.72,
+   "corners": 6
+  },
+  "bedroom": {
+   "w_m": 2.75,
+   "l_m": 2.55,
+   "area_m2": 6.34,
+   "corners": 5
+  }
+ },
+ "zones": {
+  "kitchen": "kitchen+living_room",
+  "living_room": "kitchen+living_room",
+  "hallway": "hallway",
+  "bedroom": "bedroom"
+ },
+ "doors": 2,
+ "objects": 5,
+ "landmarks": 5,
+ "landmark_candidates": 5,
+ "tags": 0,
+ "curate": {
+  "by": "rules"
+ },
+ "markers": 4,
+ "walls": 26,
+ "scan_frame": {
+  "z0": -1.3436448796447789,
+  "theta": 0.3968084952730832,
+  "origin": [
+   -2.0002840576600764,
+   -0.7389300684211422
+  ]
+ },
+ "timings_s": {
+  "fuse_s": 2.32,
+  "rooms_s": 0.22,
+  "landmarks_s": 0.23,
+  "curate_s": 0.43,
+  "objects_s": 0.05,
+  "export_s": 1.58
+ },
+ "cv_version": "5.0.0"
+}

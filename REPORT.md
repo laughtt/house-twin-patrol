@@ -80,12 +80,12 @@ Pinned: `opencv-python-headless==5.0.0.93` (`requirements.lock`, `service/requir
 Not used (yet): S3 for uploads (they stay on the instance disk), autoscaling, CloudWatch dashboards. COOL was not
 pursued: the build runs on stock OpenCV 5 on Graviton, with no COOL baseline measured.
 
-**Judge access:** web endpoint `https://game.adtomic.co` (app login: user `judge`, password in the submission form);
+**Judge access** (step by step, no iPhone needed: [TESTING.md](TESTING.md)): web endpoint `https://game.adtomic.co` (app login: user `judge`, password in the submission form);
 code and instructions in this repo; a live screen-share of the robot walk on request.
 
 ## 6. Build, deploy, test
 ```
-scripts/demo.sh offline              # self-location sandbox, camera test, fast tests (no robot)
+scripts/demo.sh offline              # on samples/synth-multi: self-location, camera test, fast tests (1 min)
 scripts/demo.sh live [house] [--ask] # live walk on Pollen's duck-sim with the camera, then the film
 scripts/demo.sh server               # the server locally
 scripts/demo.sh app                  # the Xcode project

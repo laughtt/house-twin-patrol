@@ -1,0 +1,94 @@
+{
+ "house": "lidar-20261024-120616",
+ "start": [
+  16.494,
+  3.548,
+  1.54
+ ],
+ "goals": [
+  "bedroom",
+  "bedroom_2",
+  "room_3",
+  "living_room"
+ ],
+ "goal_points": [
+  {
+   "name": "bedroom",
+   "xy": [
+    9.284,
+    6.39
+   ]
+  },
+  {
+   "name": "bedroom_2",
+   "xy": [
+    3.57,
+    6.595
+   ]
+  },
+  {
+   "name": "room_3",
+   "xy": [
+    6.775,
+    7.425
+   ]
+  },
+  {
+   "name": "living_room",
+   "xy": [
+    7.725,
+    2.875
+   ]
+  }
+ ],
+ "declared": 4,
+ "reached": 4,
+ "found_s": 7.8,
+ "time_s": 426.9,
+ "bumps": 3,
+ "camera": true,
+ "vision_decisions": 4,
+ "approvals": [
+  true,
+  true
+ ],
+ "think_ms_per_step": 56.52,
+ "plans": 199,
+ "room_right_pct": 98.7,
+ "err_when_sure_median_m": 0.072,
+ "fell": false,
+ "results": [
+  {
+   "goal": "bedroom",
+   "t": 63.2,
+   "declared": true,
+   "true_dist": 0.181,
+   "room_said": "bedroom",
+   "room_true": "bedroom"
+  },
+  {
+   "goal": "bedroom_2",
+   "t": 131.6,
+   "declared": true,
+   "true_dist": 0.263,
+   "room_said": "bedroom_2",
+   "room_true": "bedroom_2"
+  },
+  {
+   "goal": "room_3",
+   "t": 31.7,
+   "declared": true,
+   "true_dist": 0.305,
+   "room_said": "room_3",
+   "room_true": "room_3"
+  },
+  {
+   "goal": "living_room",
+   "t": 199.9,
+   "declared": true,
+   "true_dist": 0.134,
+   "room_said": "living_room",
+   "room_true": "living_room"
+  }
+ ]
+}

@@ -20,8 +20,9 @@ the camera's colours say, and the moments OpenCV changed the plan or the duck as
 Contest category: **Agentic Vision**. The checklist with evidence is in [section 6](#6-agentic-vision-evidence).
 
 ## Quick start
+Judges: [TESTING.md](TESTING.md) tests everything without the iPhone app (a built sample home is in `samples/`).
 ```
-scripts/demo.sh offline              # sandbox, camera test, fast tests: no robot needed (~5 min)
+scripts/demo.sh offline              # on samples/synth-multi: self-location, camera test, fast tests (1 min)
 scripts/demo.sh live [house] [--ask] # live walk on Pollen's duck-sim with the camera, then the film
 scripts/demo.sh server               # the app's server locally (API_KEY, TOKEN_SECRET, APP_PASSWORD_HASH)
 scripts/demo.sh app                  # generate and open the Xcode project (lidar/app)

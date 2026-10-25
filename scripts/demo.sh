@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Launch the House Twin Patrol demo (see DEMO.md).
-#   scripts/demo.sh offline              sandbox, camera test and fast tests in the offline twin (no robot needed)
+#   scripts/demo.sh offline [house]      self-location, camera + approval tests, fast tests on samples/synth-multi (no phone, robot or AWS)
 #   scripts/demo.sh live [house] [--ask] live walk on Pollen's duck-sim with the camera, then the film
 #   scripts/demo.sh server               the app's server on http://127.0.0.1:8790 (needs API_KEY, TOKEN_SECRET, APP_PASSWORD_HASH)
 #   scripts/demo.sh app                  generate the Xcode project and open it
@@ -12,8 +12,9 @@ SCENE=${DUCK_SIM_SCENE:-$HOME/Pollen/microduck_rl/src/mjlab_microduck/robot/micr
 
 case "${1:-}" in
 offline)
-    "${PY[@]}" eval/selfloc.py --variants base,spin+rowfix+range+fit+relook+jump --seeds 4
-    "${PY[@]}" eval/vision_walk.py --seeds 8
+    house=${2:-samples/synth-multi}  # a synthetic 4-room home, already built (TESTING.md)
+    "${PY[@]}" eval/selfloc.py --houses "$house" --variants base,spin+rowfix+range+fit+relook+jump --seeds 4 --run offline
+    "${PY[@]}" eval/vision_walk.py --house "$house" --seeds 8
     "${PY[@]}" -m pytest eval/adversarial -q ||
         echo "known failure: twin_rooms_tv_cue (rooms that look alike to the ToF; DEMO.md, limits)"
     ;;
