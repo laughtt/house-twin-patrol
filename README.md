@@ -1,8 +1,7 @@
 # House Twin Patrol
 
-One iPhone LiDAR walk of a home becomes a digital twin (floor plan, rooms, doors, 3D) built with **OpenCV 5**. Pollen's
-Microduck robot then patrols that home with **zero stickers**: it knows where it is from its 8×8 depth sensor and the
-twin, checks itself with OpenCV on its own camera, and asks a person when it is unsure. Contest category: **Agentic
+Small home robots like Pollen's open-source **Microduck** are coming, but a new robot in a home is lost:  We asked a simple question: *what if you could just show the robot your home first?* Everyone already carries a phone with a camera, and many have LiDAR. So we built a way to film a house once and give any robot a ready-made, measured map it can find itself in. With an agentic loop the robot can decide - follow orders locate itself - dynamcly take decisions and achieve the goal we propose in 98% out of the cases. 
+
 Vision** (OpenCV AI Competition 2026). Team: Jose Mauricio Carpio.
 
 **Technical report: [REPORT.md](REPORT.md). Project story: [docs/PROJECT_STORY.md](docs/PROJECT_STORY.md). Test it without an iPhone: [TESTING.md](TESTING.md).** **Run it: `scripts/demo.sh offline | live | server | app`. Full walkthrough, commands, results and limits: [DEMO.md](DEMO.md).** The agent loop and its trace: [agent/README.md](agent/README.md).
